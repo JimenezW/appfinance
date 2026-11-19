@@ -1,0 +1,6 @@
+{
+  "name": "Mis Finanzas",
+  "description": "App offline-first de finanzas personales con captura inmediata en cascada, saldos por cuenta, periodo fiscal con corte el día 15 y movimientos programados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
