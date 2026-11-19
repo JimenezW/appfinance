@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.AccountEntity
 import com.example.data.local.FinanceTransactionEntity
+import com.example.data.local.SyncStatus
 import com.example.data.local.TransactionTypes
 import com.example.domain.FiscalPeriodCalculator
 import com.example.ui.CategoryStat
@@ -687,6 +688,18 @@ private fun TransactionRowCard(
           text = item.entity.fiscalPeriodLabel,
           style = MaterialTheme.typography.labelSmall,
           color = financeColors.periodAccent,
+        )
+        val (syncLabel, syncColor) =
+          when (item.entity.syncStatus) {
+            SyncStatus.SYNCED -> "Sincronizado ✓" to financeColors.incomeAccent
+            SyncStatus.FAILED -> "Reintentar sync" to financeColors.expenseAccent
+            else -> "Pendiente Wi-Fi" to financeColors.pendingAccent
+          }
+        Text(
+          text = syncLabel,
+          style = MaterialTheme.typography.labelSmall,
+          color = syncColor,
+          fontWeight = FontWeight.Medium,
         )
       }
     }

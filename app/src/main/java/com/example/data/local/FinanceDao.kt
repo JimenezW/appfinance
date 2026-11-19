@@ -141,6 +141,54 @@ interface FinanceDao {
   @Query("DELETE FROM transaction_types")
   suspend fun deleteAllTypes()
 
+  // --- Sync Queue & Sync Settings ---
+  @Query("SELECT * FROM sync_queue WHERE syncStatus != 'SYNCED' ORDER BY createdAtMillis ASC")
+  fun observePendingSyncQueue(): Flow<List<SyncQueueItemEntity>>
+
+  @Query("SELECT * FROM sync_queue ORDER BY createdAtMillis DESC LIMIT 100")
+  fun observeAllSyncQueue(): Flow<List<SyncQueueItemEntity>>
+
+  @Query("SELECT * FROM sync_queue WHERE syncStatus != 'SYNCED' ORDER BY createdAtMillis ASC")
+  suspend fun getPendingSyncQueueOnce(): List<SyncQueueItemEntity>
+
+  @Query("SELECT * FROM finance_transactions WHERE syncStatus != 'SYNCED' ORDER BY createdAtMillis ASC")
+  suspend fun getPendingTransactionsOnce(): List<FinanceTransactionEntity>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertSyncQueueItem(item: SyncQueueItemEntity): Long
+
+  @Query(
+    "UPDATE sync_queue SET syncStatus = 'SYNCED', syncedAtMillis = :syncedAtMillis, lastAttemptMillis = :syncedAtMillis, lastError = NULL WHERE id IN (:ids)"
+  )
+  suspend fun markSyncQueueItemsSynced(ids: List<Long>, syncedAtMillis: Long)
+
+  @Query(
+    "UPDATE sync_queue SET syncStatus = 'FAILED', lastAttemptMillis = :attemptAtMillis, retryCount = retryCount + 1, lastError = :error WHERE id IN (:ids)"
+  )
+  suspend fun markSyncQueueItemsFailed(ids: List<Long>, attemptAtMillis: Long, error: String)
+
+  @Query(
+    "UPDATE finance_transactions SET syncStatus = 'SYNCED', syncedAtMillis = :syncedAtMillis WHERE id IN (:ids)"
+  )
+  suspend fun markTransactionsSynced(ids: List<String>, syncedAtMillis: Long)
+
+  @Query(
+    "UPDATE finance_transactions SET syncStatus = 'FAILED' WHERE id IN (:ids) AND syncStatus != 'SYNCED'"
+  )
+  suspend fun markTransactionsFailed(ids: List<String>)
+
+  @Query("DELETE FROM sync_queue")
+  suspend fun deleteAllSyncQueue()
+
+  @Query("SELECT * FROM sync_settings WHERE id = 1 LIMIT 1")
+  fun observeSyncSettings(): Flow<SyncSettingsEntity?>
+
+  @Query("SELECT * FROM sync_settings WHERE id = 1 LIMIT 1")
+  suspend fun getSyncSettingsOnce(): SyncSettingsEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsertSyncSettings(settings: SyncSettingsEntity)
+
   // --- Atomic Operations ---
   @Transaction
   suspend fun insertTransactionAndUpdateBalance(tx: FinanceTransactionEntity) {
@@ -184,6 +232,24 @@ interface FinanceDao {
   }
 
   @Transaction
+  suspend fun markBatchSyncedAtomic(
+    queueIds: List<Long>,
+    transactionIds: List<String>,
+    syncedAtMillis: Long,
+  ) {
+    if (queueIds.isNotEmpty()) {
+      queueIds.chunked(500).forEach { chunk ->
+        markSyncQueueItemsSynced(chunk, syncedAtMillis)
+      }
+    }
+    if (transactionIds.isNotEmpty()) {
+      transactionIds.chunked(500).forEach { chunk ->
+        markTransactionsSynced(chunk, syncedAtMillis)
+      }
+    }
+  }
+
+  @Transaction
   suspend fun clearAllData() {
     deleteAllTransactions()
     deleteAllScheduledRules()
@@ -192,5 +258,6 @@ interface FinanceDao {
     deleteAllDetails()
     deleteAllClassifications()
     deleteAllTypes()
+    deleteAllSyncQueue()
   }
 }

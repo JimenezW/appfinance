@@ -37,6 +37,7 @@ data class ClassificationEntity(
   val sortOrder: Int,
   val isActive: Boolean = true,
   val monthlyBudgetCents: Long? = null,
+  val isPinned: Boolean = false,
 )
 
 @Entity(
@@ -58,6 +59,7 @@ data class DetailItemEntity(
   val name: String,
   val sortOrder: Int,
   val isActive: Boolean = true,
+  val isPinned: Boolean = false,
 )
 
 @Entity(tableName = "accounts")
@@ -69,6 +71,7 @@ data class AccountEntity(
   val accountKind: String = "DEBIT", // DEBIT, CASH, VALES, CREDIT, FINTECH
   val sortOrder: Int = 0,
   val isActive: Boolean = true,
+  val isPinned: Boolean = false,
 )
 
 @Entity(tableName = "merchants")
@@ -77,6 +80,7 @@ data class MerchantEntity(
   val name: String,
   val sortOrder: Int = 0,
   val isActive: Boolean = true,
+  val isPinned: Boolean = false,
 )
 
 @Entity(tableName = "scheduled_rules")
@@ -96,6 +100,26 @@ data class ScheduledRuleEntity(
   val snoozedUntilEpochDay: Long? = null,
 )
 
+object SyncStatus {
+  const val PENDING = "PENDING"
+  const val SYNCED = "SYNCED"
+  const val FAILED = "FAILED"
+}
+
+object SyncEntityTypes {
+  const val TRANSACTION = "TRANSACTION"
+  const val CLASSIFICATION = "CLASSIFICATION"
+  const val DETAIL = "DETAIL"
+  const val ACCOUNT = "ACCOUNT"
+  const val MERCHANT = "MERCHANT"
+  const val SCHEDULED_RULE = "SCHEDULED_RULE"
+}
+
+object SyncOperations {
+  const val UPSERT = "UPSERT"
+  const val DELETE = "DELETE"
+}
+
 @Entity(
   tableName = "finance_transactions",
   indices = [Index("fiscalPeriodKey"), Index("operationEpochDay"), Index("accountId")],
@@ -113,4 +137,37 @@ data class FinanceTransactionEntity(
   val merchantName: String? = null,
   val amountCents: Long,
   val note: String? = null,
+  val updatedAtMillis: Long = createdAtMillis,
+  val syncStatus: String = SyncStatus.PENDING,
+  val syncedAtMillis: Long? = null,
+)
+
+@Entity(
+  tableName = "sync_queue",
+  indices = [Index("syncStatus"), Index("createdAtMillis")],
+)
+data class SyncQueueItemEntity(
+  @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  val entityType: String,
+  val entityId: String,
+  val operation: String,
+  val payloadJson: String,
+  val syncStatus: String = SyncStatus.PENDING,
+  val createdAtMillis: Long = System.currentTimeMillis(),
+  val lastAttemptMillis: Long? = null,
+  val syncedAtMillis: Long? = null,
+  val retryCount: Int = 0,
+  val lastError: String? = null,
+)
+
+@Entity(tableName = "sync_settings")
+data class SyncSettingsEntity(
+  @PrimaryKey val id: Int = 1,
+  val apiEndpointUrl: String = "",
+  val apiAuthToken: String = "",
+  val autoSyncOnWifi: Boolean = true,
+  val deviceLabel: String = "Android",
+  val lastSuccessfulSyncMillis: Long? = null,
+  val lastAttemptMillis: Long? = null,
+  val lastSyncMessage: String? = null,
 )

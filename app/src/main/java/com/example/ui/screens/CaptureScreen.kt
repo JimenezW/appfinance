@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,9 +36,14 @@ import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storefront
+import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material.icons.rounded.WifiOff
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,6 +82,8 @@ import com.example.ui.PendingRuleDisplay
 import com.example.ui.components.NumericKeypad
 import com.example.ui.components.OperationDatePickerDialog
 import com.example.ui.components.PendingRuleTopBanner
+import com.example.ui.components.PickerOption
+import com.example.ui.components.SearchableOptionBottomSheet
 import com.example.ui.components.SectionHeader
 import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.theme.MonoFontFamily
@@ -102,10 +108,20 @@ fun CaptureScreen(
   onConfirmPendingRule: (PendingRuleDisplay) -> Unit,
   onOpenScheduledTab: () -> Unit,
   onOpenAccountsAdmin: () -> Unit,
+  onOpenSyncAdmin: () -> Unit,
+  onQuickCreateClassification: (String) -> Unit = {},
+  onQuickCreateDetail: (String) -> Unit = {},
+  onTogglePinClassification: (Long) -> Unit = {},
+  onTogglePinDetail: (Long) -> Unit = {},
+  onTogglePinAccount: (Long) -> Unit = {},
+  onTogglePinMerchant: (Long) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   var showDatePicker by remember { mutableStateOf(false) }
   var showMerchantSheet by remember { mutableStateOf(false) }
+  var showClassificationSheet by remember { mutableStateOf(false) }
+  var showDetailSheet by remember { mutableStateOf(false) }
+  var showAccountSheet by remember { mutableStateOf(false) }
   var keypadExpanded by remember { mutableStateOf(false) }
 
   BackHandler(enabled = keypadExpanded) { keypadExpanded = false }
@@ -124,6 +140,7 @@ fun CaptureScreen(
           modifier = Modifier.weight(1.25f).fillMaxHeight().verticalScroll(rememberScrollState()),
           verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+          CaptureWifiStatusBar(state = state, onClick = onOpenSyncAdmin)
           if (firstPending != null) {
             PendingRuleTopBanner(
               pending = firstPending,
@@ -145,6 +162,8 @@ fun CaptureScreen(
             state = state,
             onSelectClassification = onSelectClassification,
             onSelectDetail = onSelectDetail,
+            onOpenClassificationPicker = { showClassificationSheet = true },
+            onOpenDetailPicker = { showDetailSheet = true },
             onApplyIncomeShortcut = onApplyIncomeShortcut,
           )
           AccountSelectorStrip(
@@ -152,6 +171,7 @@ fun CaptureScreen(
             selectedAccountId = state.effectiveAccountId,
             isIncome = state.capture.typeId == TransactionTypes.INGRESO,
             onSelectAccount = onSelectAccount,
+            onOpenAccountPicker = { showAccountSheet = true },
             onOpenAccountsAdmin = onOpenAccountsAdmin,
           )
           MerchantAndNoteBar(
@@ -209,6 +229,7 @@ fun CaptureScreen(
               .padding(horizontal = 14.dp, vertical = 8.dp),
           verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+          CaptureWifiStatusBar(state = state, onClick = onOpenSyncAdmin)
           if (firstPending != null) {
             PendingRuleTopBanner(
               pending = firstPending,
@@ -242,6 +263,8 @@ fun CaptureScreen(
             state = state,
             onSelectClassification = onSelectClassification,
             onSelectDetail = onSelectDetail,
+            onOpenClassificationPicker = { showClassificationSheet = true },
+            onOpenDetailPicker = { showDetailSheet = true },
             onApplyIncomeShortcut = onApplyIncomeShortcut,
           )
 
@@ -250,6 +273,7 @@ fun CaptureScreen(
             selectedAccountId = state.effectiveAccountId,
             isIncome = state.capture.typeId == TransactionTypes.INGRESO,
             onSelectAccount = onSelectAccount,
+            onOpenAccountPicker = { showAccountSheet = true },
             onOpenAccountsAdmin = onOpenAccountsAdmin,
           )
 
@@ -340,13 +364,191 @@ fun CaptureScreen(
     MerchantPickerBottomSheet(
       isIncome = state.capture.typeId == TransactionTypes.INGRESO,
       merchants = state.activeMerchants,
+      usageCountFor = { state.merchantUsageCount(it.name) },
       currentValue = state.capture.merchantName,
+      onTogglePinMerchant = onTogglePinMerchant,
       onDismiss = { showMerchantSheet = false },
       onSelectMerchant = {
         onSelectMerchant(it)
         showMerchantSheet = false
       },
     )
+  }
+
+  if (showClassificationSheet) {
+    val isExpense = state.capture.typeId == TransactionTypes.GASTO
+    val accent = if (isExpense) LocalFinanceColors.current.expenseAccent else LocalFinanceColors.current.incomeAccent
+    val container = if (isExpense) LocalFinanceColors.current.expenseContainer else LocalFinanceColors.current.incomeContainer
+    val options =
+      state.activeClassificationsForCapture.map { cls ->
+        val detCount = state.allDetails.count { it.isActive && it.classificationId == cls.id }
+        val uses = state.classificationUsageCount(cls.id)
+        val usesText = if (uses > 0) " • $uses usos" else ""
+        val budget = cls.monthlyBudgetCents?.let { " • Tope ${FiscalPeriodCalculator.formatMxn(it)}" } ?: ""
+        PickerOption(
+          id = cls.id,
+          title = cls.name,
+          subtitle = "$detCount detalles$usesText$budget",
+          isPinned = cls.isPinned,
+        )
+      }
+    SearchableOptionBottomSheet(
+      title = if (isExpense) "Elegir Clasificación (Gasto)" else "Elegir Clasificación (Ingreso)",
+      options = options,
+      selectedId = state.effectiveClassificationId,
+      accentColor = accent,
+      containerColor = container,
+      searchPlaceholder = "Buscar o crear clasificación...",
+      createButtonPrefix = "Crear clasificación",
+      onCreateNew = { newName ->
+        onQuickCreateClassification(newName)
+        showClassificationSheet = false
+      },
+      onTogglePin = onTogglePinClassification,
+      onDismiss = { showClassificationSheet = false },
+      onSelect = {
+        onSelectClassification(it)
+        showClassificationSheet = false
+      },
+    )
+  }
+
+  if (showDetailSheet) {
+    val isExpense = state.capture.typeId == TransactionTypes.GASTO
+    val accent = if (isExpense) LocalFinanceColors.current.expenseAccent else LocalFinanceColors.current.incomeAccent
+    val container = if (isExpense) LocalFinanceColors.current.expenseContainer else LocalFinanceColors.current.incomeContainer
+    val selectedClassName =
+      state.activeClassificationsForCapture.firstOrNull { it.id == state.effectiveClassificationId }?.name
+        ?: "Detalle"
+    val options =
+      state.activeDetailsForCapture.map { det ->
+        val uses = state.detailUsageCount(det.id)
+        PickerOption(
+          id = det.id,
+          title = det.name,
+          subtitle = if (uses > 0) "$uses registros previos" else null,
+          isPinned = det.isPinned,
+        )
+      }
+    SearchableOptionBottomSheet(
+      title = "Detalle de $selectedClassName",
+      options = options,
+      selectedId = state.effectiveDetailId,
+      accentColor = accent,
+      containerColor = container,
+      searchPlaceholder = "Buscar o crear detalle...",
+      createButtonPrefix = "Agregar detalle",
+      onCreateNew = { newName ->
+        onQuickCreateDetail(newName)
+        showDetailSheet = false
+      },
+      onTogglePin = onTogglePinDetail,
+      onDismiss = { showDetailSheet = false },
+      onSelect = {
+        onSelectDetail(it)
+        showDetailSheet = false
+      },
+    )
+  }
+
+  if (showAccountSheet) {
+    val isExpense = state.capture.typeId == TransactionTypes.GASTO
+    val accent = if (isExpense) LocalFinanceColors.current.expenseAccent else LocalFinanceColors.current.incomeAccent
+    val container = if (isExpense) LocalFinanceColors.current.expenseContainer else LocalFinanceColors.current.incomeContainer
+    val options =
+      state.activeAccounts.map { acc ->
+        val uses = state.accountUsageCount(acc.id)
+        val usesText = if (uses > 0) " • $uses movs" else ""
+        PickerOption(
+          id = acc.id,
+          title = acc.name,
+          subtitle = "Saldo: ${FiscalPeriodCalculator.formatMxn(acc.balanceCents)}$usesText",
+          isPinned = acc.isPinned,
+        )
+      }
+    SearchableOptionBottomSheet(
+      title = if (isExpense) "Cuenta / Método de Pago" else "Cuenta Destino",
+      options = options,
+      selectedId = state.effectiveAccountId,
+      accentColor = accent,
+      containerColor = container,
+      searchPlaceholder = "Buscar cuenta...",
+      onTogglePin = onTogglePinAccount,
+      onDismiss = { showAccountSheet = false },
+      onSelect = {
+        onSelectAccount(it)
+        showAccountSheet = false
+      },
+    )
+  }
+}
+
+@Composable
+private fun CaptureWifiStatusBar(
+  state: FinanceUiState,
+  onClick: () -> Unit,
+) {
+  val financeColors = LocalFinanceColors.current
+  val isWifi = state.wifiState.isWifiConnected
+  val pending = state.pendingSyncCount
+  val bg =
+    when {
+      isWifi && pending == 0 -> financeColors.incomeContainer
+      isWifi -> financeColors.periodContainer
+      else -> financeColors.pendingContainer
+    }
+  val accent =
+    when {
+      isWifi && pending == 0 -> financeColors.incomeAccent
+      isWifi -> financeColors.periodAccent
+      else -> financeColors.pendingAccent
+    }
+  val label =
+    when {
+      isWifi && pending > 0 -> "Wi-Fi conectado • $pending por sincronizar"
+      isWifi -> "Wi-Fi conectado • Sincronización lista"
+      pending > 0 -> "Modo offline • $pending pendientes para Wi-Fi"
+      else -> "Modo offline • Se sincronizará al conectar Wi-Fi"
+    }
+
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(10.dp),
+    color = bg,
+    border = BorderStroke(1.dp, accent.copy(alpha = 0.3f)),
+    modifier = Modifier.fillMaxWidth().testTag("capture_wifi_status_bar"),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        Icon(
+          imageVector = if (isWifi) Icons.Rounded.Wifi else Icons.Rounded.WifiOff,
+          contentDescription = null,
+          tint = accent,
+          modifier = Modifier.size(15.dp),
+        )
+        Text(
+          text = label,
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.SemiBold,
+          color = accent,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      Text(
+        text = "Sync",
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = accent,
+      )
+    }
   }
 }
 
@@ -574,12 +776,13 @@ private fun DateAndFiscalPeriodRow(
   }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CascadingClassificationsAndDetails(
   state: FinanceUiState,
   onSelectClassification: (Long) -> Unit,
   onSelectDetail: (Long) -> Unit,
+  onOpenClassificationPicker: () -> Unit,
+  onOpenDetailPicker: () -> Unit,
   onApplyIncomeShortcut: (String, String, String, String?) -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
@@ -590,59 +793,114 @@ private fun CascadingClassificationsAndDetails(
   val classifications = state.activeClassificationsForCapture
   val selectedClassId = state.effectiveClassificationId
   val selectedClassName =
-    classifications.firstOrNull { it.id == selectedClassId }?.name ?: "Clasificación"
+    classifications.firstOrNull { it.id == selectedClassId }?.name ?: "Seleccionar"
   val details = state.activeDetailsForCapture
   val selectedDetailId = state.effectiveDetailId
+  val selectedDetailName =
+    details.firstOrNull { it.id == selectedDetailId }?.name ?: "Seleccionar"
 
-  // 1. Classifications Grid (all directly visible in thumb zone)
-  SectionHeader(
-    title =
-      if (isExpense) "Clasificación — Gasto (${classifications.size} disponibles)"
-      else "Clasificación — Ingreso (${classifications.size} disponibles)"
-  )
-  FlowRow(
-    modifier = Modifier.fillMaxWidth().testTag("classification_chip_grid"),
-    horizontalArrangement = Arrangement.spacedBy(6.dp),
-    verticalArrangement = Arrangement.spacedBy(6.dp),
+  val quickClassifications =
+    remember(classifications, selectedClassId) {
+      buildQuickPreviewList(classifications, selectedClassId, maxCount = 5) { it.id }
+    }
+  val quickDetails =
+    remember(details, selectedDetailId) {
+      buildQuickPreviewList(details, selectedDetailId, maxCount = 5) { it.id }
+    }
+
+  Surface(
+    shape = RoundedCornerShape(16.dp),
+    color = MaterialTheme.colorScheme.surface,
+    border = BorderStroke(1.dp, financeColors.cardBorder),
+    modifier = Modifier.fillMaxWidth(),
   ) {
-    classifications.forEach { item ->
-      val selected = item.id == selectedClassId
-      CascadeChip(
-        label = item.name,
-        selected = selected,
-        selectedBackground = accentColor,
-        selectedTextColor = Color.White,
-        selectedBorder = accentColor,
-        onClick = { onSelectClassification(item.id) },
-        modifier = Modifier.testTag("class_chip_${item.id}"),
+    Column(
+      modifier = Modifier.padding(12.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      // 1. Classification Selector Header + Single-Row Quick Strip
+      ErgonomicSelectorHeader(
+        label = "Clasificación",
+        selectedName = selectedClassName,
+        totalCount = classifications.size,
+        accentColor = accentColor,
+        containerColor = containerColor,
+        onClick = onOpenClassificationPicker,
+        testTag = "classification_picker_btn",
       )
+
+      LazyRow(
+        modifier = Modifier.fillMaxWidth().testTag("classification_chip_grid"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        items(quickClassifications, key = { it.id }) { item ->
+          val selected = item.id == selectedClassId
+          CascadeChip(
+            label = item.name,
+            selected = selected,
+            isPinned = item.isPinned,
+            selectedBackground = accentColor,
+            selectedTextColor = Color.White,
+            selectedBorder = accentColor,
+            onClick = { onSelectClassification(item.id) },
+            modifier = Modifier.testTag("class_chip_${item.id}"),
+          )
+        }
+        if (classifications.size > quickClassifications.size) {
+          item {
+            ShowAllPickerChip(
+              label = "Todas (${classifications.size})",
+              accentColor = accentColor,
+              onClick = onOpenClassificationPicker,
+            )
+          }
+        }
+      }
+
+      Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(financeColors.cardBorder))
+
+      // 2. Dependent Detail Selector Header + Single-Row Quick Strip
+      ErgonomicSelectorHeader(
+        label = "Detalle",
+        selectedName = selectedDetailName,
+        totalCount = details.size,
+        accentColor = accentColor,
+        containerColor = containerColor,
+        onClick = onOpenDetailPicker,
+        testTag = "detail_picker_btn",
+      )
+
+      LazyRow(
+        modifier = Modifier.fillMaxWidth().testTag("detail_chip_grid"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        items(quickDetails, key = { it.id }) { det ->
+          val selected = det.id == selectedDetailId
+          CascadeChip(
+            label = det.name,
+            selected = selected,
+            isPinned = det.isPinned,
+            selectedBackground = containerColor,
+            selectedTextColor = accentColor,
+            selectedBorder = accentColor,
+            onClick = { onSelectDetail(det.id) },
+            modifier = Modifier.testTag("detail_chip_${det.id}"),
+          )
+        }
+        if (details.size > quickDetails.size) {
+          item {
+            ShowAllPickerChip(
+              label = "Todos (${details.size})",
+              accentColor = accentColor,
+              onClick = onOpenDetailPicker,
+            )
+          }
+        }
+      }
     }
   }
 
-  // 2. Dependent Details Grid
-  SectionHeader(
-    title = "Detalle dependiente de '$selectedClassName' (${details.size} visibles)"
-  )
-  FlowRow(
-    modifier = Modifier.fillMaxWidth().testTag("detail_chip_grid"),
-    horizontalArrangement = Arrangement.spacedBy(6.dp),
-    verticalArrangement = Arrangement.spacedBy(6.dp),
-  ) {
-    details.forEach { det ->
-      val selected = det.id == selectedDetailId
-      CascadeChip(
-        label = det.name,
-        selected = selected,
-        selectedBackground = containerColor,
-        selectedTextColor = accentColor,
-        selectedBorder = accentColor,
-        onClick = { onSelectDetail(det.id) },
-        modifier = Modifier.testTag("detail_chip_${det.id}"),
-      )
-    }
-  }
-
-  // 3. Income quick-fill amount shortcuts (matching mockup 1 right side)
+  // 3. Income quick-fill amount shortcuts
   AnimatedVisibility(visible = !isExpense) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
       SectionHeader(title = "Atajos de importe frecuente (1 toque)")
@@ -667,10 +925,123 @@ private fun CascadingClassificationsAndDetails(
   }
 }
 
+private fun <T> buildQuickPreviewList(
+  all: List<T>,
+  selectedId: Long?,
+  maxCount: Int,
+  idSelector: (T) -> Long,
+): List<T> {
+  if (all.size <= maxCount) return all
+  val selectedItem = selectedId?.let { id -> all.firstOrNull { idSelector(it) == id } }
+  val base = all.take(maxCount).toMutableList()
+  if (selectedItem != null && base.none { idSelector(it) == idSelector(selectedItem) }) {
+    base[base.lastIndex] = selectedItem
+  }
+  return base
+}
+
+@Composable
+private fun ErgonomicSelectorHeader(
+  label: String,
+  selectedName: String,
+  totalCount: Int,
+  accentColor: Color,
+  containerColor: Color,
+  onClick: () -> Unit,
+  testTag: String,
+) {
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(12.dp),
+    color = containerColor.copy(alpha = 0.5f),
+    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.25f)),
+    modifier = Modifier.fillMaxWidth().height(48.dp).testTag(testTag),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Row(
+        modifier = Modifier.weight(1f).padding(end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Text(
+          text = label,
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+          text = selectedName,
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.Bold,
+          color = accentColor,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        Text(
+          text = "Elegir ($totalCount)",
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.SemiBold,
+          color = accentColor,
+        )
+        Icon(
+          imageVector = Icons.Rounded.ExpandMore,
+          contentDescription = "Abrir lista completa de $label",
+          tint = accentColor,
+          modifier = Modifier.size(18.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun ShowAllPickerChip(
+  label: String,
+  accentColor: Color,
+  onClick: () -> Unit,
+) {
+  val financeColors = LocalFinanceColors.current
+  Surface(
+    onClick = onClick,
+    modifier = Modifier.height(38.dp),
+    shape = RoundedCornerShape(10.dp),
+    color = financeColors.subtleSurface,
+    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.4f)),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Icon(
+        imageVector = Icons.Rounded.Search,
+        contentDescription = null,
+        tint = accentColor,
+        modifier = Modifier.size(14.dp),
+      )
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        color = accentColor,
+      )
+    }
+  }
+}
+
 @Composable
 private fun CascadeChip(
   label: String,
   selected: Boolean,
+  isPinned: Boolean = false,
   selectedBackground: Color,
   selectedTextColor: Color,
   selectedBorder: Color,
@@ -689,10 +1060,21 @@ private fun CascadeChip(
         color = if (selected) selectedBorder else financeColors.cardBorder,
       ),
   ) {
-    Box(
-      contentAlignment = Alignment.Center,
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
       modifier = Modifier.padding(horizontal = 12.dp),
     ) {
+      if (isPinned) {
+        Icon(
+          imageVector = Icons.Rounded.Star,
+          contentDescription = null,
+          tint =
+            if (selected) selectedTextColor.copy(alpha = 0.9f)
+            else financeColors.pendingAccent,
+          modifier = Modifier.size(12.dp),
+        )
+      }
       Text(
         text = label,
         style = MaterialTheme.typography.labelMedium,
@@ -735,22 +1117,47 @@ private fun AccountSelectorStrip(
   selectedAccountId: Long?,
   isIncome: Boolean,
   onSelectAccount: (Long) -> Unit,
+  onOpenAccountPicker: () -> Unit,
   onOpenAccountsAdmin: () -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
   val accentColor = if (isIncome) financeColors.incomeAccent else financeColors.expenseAccent
   val containerColor =
     if (isIncome) financeColors.incomeContainer else financeColors.expenseContainer
-
-  SectionHeader(
-    title = if (isIncome) "Cuenta Destino (Acredita Saldo)" else "Método de Pago / Cuenta Origen"
-  )
+  val quickAccounts =
+    remember(accounts, selectedAccountId) {
+      buildQuickPreviewList(accounts, selectedAccountId, maxCount = 5) { it.id }
+    }
 
   Row(
-    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = if (isIncome) "Cuenta Destino (Acredita Saldo)" else "Método de Pago / Cuenta Origen",
+      style = MaterialTheme.typography.titleSmall,
+      color = MaterialTheme.colorScheme.onSurface,
+    )
+    TextButton(
+      onClick = onOpenAccountPicker,
+      contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+      modifier = Modifier.testTag("account_picker_btn"),
+    ) {
+      Text(
+        text = "Todas (${accounts.size})",
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        color = accentColor,
+      )
+    }
+  }
+
+  LazyRow(
+    modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    accounts.forEach { acc ->
+    items(quickAccounts, key = { it.id }) { acc ->
       val selected = acc.id == selectedAccountId
       Surface(
         onClick = { onSelectAccount(acc.id) },
@@ -786,27 +1193,29 @@ private fun AccountSelectorStrip(
       }
     }
 
-    Surface(
-      onClick = onOpenAccountsAdmin,
-      shape = RoundedCornerShape(12.dp),
-      color = financeColors.subtleSurface,
-      border = BorderStroke(1.dp, financeColors.cardBorder),
-    ) {
-      Column(
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    item {
+      Surface(
+        onClick = onOpenAccountsAdmin,
+        shape = RoundedCornerShape(12.dp),
+        color = financeColors.subtleSurface,
+        border = BorderStroke(1.dp, financeColors.cardBorder),
       ) {
-        Text(
-          text = "Otra",
-          style = MaterialTheme.typography.labelMedium,
-          fontWeight = FontWeight.SemiBold,
-          color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-          text = "+ CRUD",
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+          Text(
+            text = "Otra",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+          )
+          Text(
+            text = "+ Admin",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
       }
     }
   }
@@ -950,11 +1359,14 @@ private fun SaveTransactionButton(
 private fun MerchantPickerBottomSheet(
   isIncome: Boolean,
   merchants: List<MerchantEntity>,
+  usageCountFor: (MerchantEntity) -> Int,
   currentValue: String,
+  onTogglePinMerchant: (Long) -> Unit,
   onDismiss: () -> Unit,
   onSelectMerchant: (String) -> Unit,
 ) {
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+  val financeColors = LocalFinanceColors.current
   var query by remember { mutableStateOf(currentValue) }
   val filtered =
     remember(merchants, query) {
@@ -1011,7 +1423,7 @@ private fun MerchantPickerBottomSheet(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
-          text = "Frecuentes (${filtered.size})",
+          text = "Frecuentes y favoritos (${filtered.size})",
           style = MaterialTheme.typography.labelMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1024,6 +1436,7 @@ private fun MerchantPickerBottomSheet(
       ) {
         items(filtered, key = { it.id }) { m ->
           val selected = m.name.equals(currentValue, ignoreCase = true)
+          val uses = usageCountFor(m)
           Surface(
             onClick = { onSelectMerchant(m.name) },
             shape = RoundedCornerShape(10.dp),
@@ -1033,21 +1446,44 @@ private fun MerchantPickerBottomSheet(
             modifier = Modifier.fillMaxWidth(),
           ) {
             Row(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+              modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically,
             ) {
-              Text(
-                text = m.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-              )
-              if (selected) {
-                Icon(
-                  imageVector = Icons.Rounded.Check,
-                  contentDescription = null,
-                  tint = MaterialTheme.colorScheme.primary,
+              Column(modifier = Modifier.weight(1f).padding(end = 6.dp)) {
+                Text(
+                  text = m.name,
+                  style = MaterialTheme.typography.bodyLarge,
+                  fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                 )
+                if (uses > 0) {
+                  Text(
+                    text = "$uses usos previos",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { onTogglePinMerchant(m.id) }) {
+                  Icon(
+                    imageVector =
+                      if (m.isPinned) Icons.Rounded.Star else Icons.Outlined.StarOutline,
+                    contentDescription =
+                      if (m.isPinned) "Quitar de favoritos" else "Fijar comercio favorito",
+                    tint =
+                      if (m.isPinned) financeColors.pendingAccent
+                      else MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+                if (selected) {
+                  Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = "Seleccionado",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 6.dp),
+                  )
+                }
               }
             }
           }

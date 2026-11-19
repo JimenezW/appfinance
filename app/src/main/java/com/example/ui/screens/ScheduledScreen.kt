@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,6 +28,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -61,15 +61,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.sp
 import com.example.data.local.ScheduledRuleEntity
 import com.example.data.local.TransactionTypes
 import com.example.domain.FiscalPeriodCalculator
 import com.example.ui.FinanceUiState
 import com.example.ui.PendingRuleDisplay
+import com.example.ui.components.PickerOption
+import com.example.ui.components.SearchableOptionBottomSheet
 import com.example.ui.theme.LocalFinanceColors
 import com.example.ui.theme.MonoFontFamily
+import kotlinx.coroutines.launch
 
 @Composable
 fun ScheduledScreen(
@@ -487,6 +489,23 @@ private fun ScheduledRuleEditorSheet(
     )
   }
 
+  var showClassPicker by remember { mutableStateOf(false) }
+  var showDetailPicker by remember { mutableStateOf(false) }
+  var showAccountPicker by remember { mutableStateOf(false) }
+
+  val financeColors = LocalFinanceColors.current
+  val isIncome = typeId == TransactionTypes.INGRESO
+  val accentColor = if (isIncome) financeColors.incomeAccent else financeColors.expenseAccent
+  val containerColor =
+    if (isIncome) financeColors.incomeContainer else financeColors.expenseContainer
+
+  val selectedClassName =
+    availableClasses.firstOrNull { it.id == classId }?.name ?: "Seleccionar"
+  val selectedDetailName =
+    availableDetails.firstOrNull { it.id == detailId }?.name ?: "Seleccionar"
+  val selectedAccount =
+    state.activeAccounts.firstOrNull { it.id == accountId }
+
   val amountCents = FiscalPeriodCalculator.parseAmountToCents(amountText)
   val rawDayInt = dayText.toIntOrNull()
   val isDayValid = isEndOfMonth || (rawDayInt != null && rawDayInt in 1..28)
@@ -589,7 +608,7 @@ private fun ScheduledRuleEditorSheet(
             color =
               if (sel) MaterialTheme.colorScheme.primaryContainer
               else MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.weight(1f).height(42.dp),
+            modifier = Modifier.weight(1f).height(48.dp),
           ) {
             Row(
               horizontalArrangement = Arrangement.Center,
@@ -601,77 +620,36 @@ private fun ScheduledRuleEditorSheet(
         }
       }
 
-      Text("Clasificación", style = MaterialTheme.typography.labelSmall)
-      Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        availableClasses.forEach { cls ->
-          val sel = cls.id == classId
-          Surface(
-            onClick = { classId = cls.id },
-            shape = RoundedCornerShape(8.dp),
-            color =
-              if (sel) MaterialTheme.colorScheme.primary
-              else MaterialTheme.colorScheme.surfaceVariant,
-          ) {
-            Text(
-              text = cls.name,
-              color = if (sel) Color.White else MaterialTheme.colorScheme.onSurface,
-              style = MaterialTheme.typography.labelMedium,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-          }
-        }
-      }
+      RuleSelectorCard(
+        label = "Clasificación",
+        value = selectedClassName,
+        count = availableClasses.size,
+        accentColor = accentColor,
+        containerColor = containerColor,
+        onClick = { showClassPicker = true },
+        testTag = "rule_classification_picker",
+      )
 
-      Text("Detalle", style = MaterialTheme.typography.labelSmall)
-      Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        availableDetails.forEach { det ->
-          val sel = det.id == detailId
-          Surface(
-            onClick = { detailId = det.id },
-            shape = RoundedCornerShape(8.dp),
-            color =
-              if (sel) MaterialTheme.colorScheme.primaryContainer
-              else MaterialTheme.colorScheme.surfaceVariant,
-          ) {
-            Text(
-              text = det.name,
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-          }
-        }
-      }
+      RuleSelectorCard(
+        label = "Detalle",
+        value = selectedDetailName,
+        count = availableDetails.size,
+        accentColor = accentColor,
+        containerColor = containerColor,
+        onClick = { showDetailPicker = true },
+        testTag = "rule_detail_picker",
+      )
 
-      Text("Cuenta", style = MaterialTheme.typography.labelSmall)
-      Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        state.activeAccounts.forEach { acc ->
-          val sel = acc.id == accountId
-          Surface(
-            onClick = { accountId = acc.id },
-            shape = RoundedCornerShape(8.dp),
-            color =
-              if (sel) MaterialTheme.colorScheme.primaryContainer
-              else MaterialTheme.colorScheme.surfaceVariant,
-          ) {
-            Text(
-              text = acc.shortLabel,
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-          }
-        }
-      }
+      RuleSelectorCard(
+        label = "Cuenta",
+        value = selectedAccount?.let { "${it.shortLabel} · ${FiscalPeriodCalculator.formatMxn(it.balanceCents)}" }
+          ?: "Seleccionar",
+        count = state.activeAccounts.size,
+        accentColor = accentColor,
+        containerColor = containerColor,
+        onClick = { showAccountPicker = true },
+        testTag = "rule_account_picker",
+      )
 
       Button(
         onClick = {
@@ -704,6 +682,119 @@ private fun ScheduledRuleEditorSheet(
         shape = RoundedCornerShape(12.dp),
       ) {
         Text("Guardar Regla")
+      }
+    }
+  }
+
+  if (showClassPicker) {
+    SearchableOptionBottomSheet(
+      title = "Clasificación de la Regla",
+      options = availableClasses.map { PickerOption(id = it.id, title = it.name) },
+      selectedId = classId,
+      accentColor = accentColor,
+      containerColor = containerColor,
+      searchPlaceholder = "Buscar clasificación...",
+      onDismiss = { showClassPicker = false },
+      onSelect = {
+        classId = it
+        showClassPicker = false
+      },
+    )
+  }
+
+  if (showDetailPicker) {
+    SearchableOptionBottomSheet(
+      title = "Detalle de $selectedClassName",
+      options = availableDetails.map { PickerOption(id = it.id, title = it.name) },
+      selectedId = detailId,
+      accentColor = accentColor,
+      containerColor = containerColor,
+      searchPlaceholder = "Buscar detalle...",
+      onDismiss = { showDetailPicker = false },
+      onSelect = {
+        detailId = it
+        showDetailPicker = false
+      },
+    )
+  }
+
+  if (showAccountPicker) {
+    SearchableOptionBottomSheet(
+      title = "Cuenta de la Regla",
+      options =
+        state.activeAccounts.map {
+          PickerOption(
+            id = it.id,
+            title = it.name,
+            subtitle = "Saldo: ${FiscalPeriodCalculator.formatMxn(it.balanceCents)}",
+          )
+        },
+      selectedId = accountId,
+      accentColor = accentColor,
+      containerColor = containerColor,
+      searchPlaceholder = "Buscar cuenta...",
+      onDismiss = { showAccountPicker = false },
+      onSelect = {
+        accountId = it
+        showAccountPicker = false
+      },
+    )
+  }
+}
+
+@Composable
+private fun RuleSelectorCard(
+  label: String,
+  value: String,
+  count: Int,
+  accentColor: Color,
+  containerColor: Color,
+  onClick: () -> Unit,
+  testTag: String,
+) {
+  Surface(
+    onClick = onClick,
+    shape = RoundedCornerShape(12.dp),
+    color = containerColor.copy(alpha = 0.45f),
+    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.28f)),
+    modifier = Modifier.fillMaxWidth().height(50.dp).testTag(testTag),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+        Text(
+          text = label,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+          text = value,
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.Bold,
+          color = accentColor,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        Text(
+          text = "Elegir ($count)",
+          style = MaterialTheme.typography.labelSmall,
+          fontWeight = FontWeight.SemiBold,
+          color = accentColor,
+        )
+        Icon(
+          imageVector = Icons.Rounded.ExpandMore,
+          contentDescription = "Seleccionar $label",
+          tint = accentColor,
+          modifier = Modifier.size(18.dp),
+        )
       }
     }
   }

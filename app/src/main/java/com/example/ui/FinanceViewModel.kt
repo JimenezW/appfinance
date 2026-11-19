@@ -10,8 +10,20 @@ import com.example.data.local.DetailItemEntity
 import com.example.data.local.FinanceTransactionEntity
 import com.example.data.local.MerchantEntity
 import com.example.data.local.ScheduledRuleEntity
+import com.example.data.local.SyncEntityTypes
+import com.example.data.local.SyncQueueItemEntity
+import com.example.data.local.SyncSettingsEntity
+import com.example.data.local.SyncStatus
+import com.example.data.local.TransactionTypeEntity
 import com.example.data.local.TransactionTypes
 import com.example.data.repository.FinanceRepository
+import com.example.data.sync.ConnectivityMonitor
+import com.example.data.sync.OkHttpSyncTransport
+import com.example.data.sync.SyncManager
+import com.example.data.sync.SyncPhase
+import com.example.data.sync.SyncRuntimeStatus
+import com.example.data.sync.WifiConnectivityObserver
+import com.example.data.sync.WifiConnectivityState
 import com.example.domain.FiscalPeriod
 import com.example.domain.FiscalPeriodCalculator
 import java.util.UUID
@@ -22,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -100,6 +113,7 @@ data class FinanceUiState(
   val currentTab: MainTab = MainTab.CAPTURAR,
   val adminSubSection: AdminSubSection = AdminSubSection.HUB,
   val capture: CaptureFormState = CaptureFormState(),
+  val allTypes: List<TransactionTypeEntity> = emptyList(),
   val allClassifications: List<ClassificationEntity> = emptyList(),
   val allDetails: List<DetailItemEntity> = emptyList(),
   val allAccounts: List<AccountEntity> = emptyList(),
@@ -111,9 +125,97 @@ data class FinanceUiState(
   val selectedAccountFilterId: Long? = null,
   val searchQuery: String = "",
   val statsShowIncome: Boolean = false,
+  val wifiState: WifiConnectivityState = WifiConnectivityState(),
+  val syncSettings: SyncSettingsEntity = SyncSettingsEntity(),
+  val pendingSyncQueue: List<SyncQueueItemEntity> = emptyList(),
+  val syncQueueHistory: List<SyncQueueItemEntity> = emptyList(),
+  val syncRuntimeStatus: SyncRuntimeStatus = SyncRuntimeStatus(),
 ) {
+  val pendingSyncCount: Int
+    get() {
+      val queuedTxIds =
+        pendingSyncQueue
+          .filter { it.entityType == SyncEntityTypes.TRANSACTION }
+          .map { it.entityId }
+          .toSet()
+      val unqueuedUnsyncedTx =
+        allTransactions.count {
+          it.syncStatus != SyncStatus.SYNCED && it.id !in queuedTxIds
+        }
+      return pendingSyncQueue.size + unqueuedUnsyncedTx
+    }
+
+  private val classificationUsageStats: Map<Long, Pair<Int, Long>>
+    get() {
+      val map = HashMap<Long, Pair<Int, Long>>()
+      allTransactions.forEach { tx ->
+        val prev = map[tx.classificationId]
+        val count = (prev?.first ?: 0) + 1
+        val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
+        map[tx.classificationId] = count to last
+      }
+      return map
+    }
+
+  private val detailUsageStats: Map<Long, Pair<Int, Long>>
+    get() {
+      val map = HashMap<Long, Pair<Int, Long>>()
+      allTransactions.forEach { tx ->
+        val prev = map[tx.detailId]
+        val count = (prev?.first ?: 0) + 1
+        val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
+        map[tx.detailId] = count to last
+      }
+      return map
+    }
+
+  private val accountUsageStats: Map<Long, Pair<Int, Long>>
+    get() {
+      val map = HashMap<Long, Pair<Int, Long>>()
+      allTransactions.forEach { tx ->
+        val prev = map[tx.accountId]
+        val count = (prev?.first ?: 0) + 1
+        val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
+        map[tx.accountId] = count to last
+      }
+      return map
+    }
+
+  private val merchantUsageStats: Map<String, Pair<Int, Long>>
+    get() {
+      val map = HashMap<String, Pair<Int, Long>>()
+      allTransactions.forEach { tx ->
+        val key = tx.merchantName?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return@forEach
+        val prev = map[key]
+        val count = (prev?.first ?: 0) + 1
+        val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
+        map[key] = count to last
+      }
+      return map
+    }
+
+  fun classificationUsageCount(id: Long): Int = classificationUsageStats[id]?.first ?: 0
+
+  fun detailUsageCount(id: Long): Int = detailUsageStats[id]?.first ?: 0
+
+  fun accountUsageCount(id: Long): Int = accountUsageStats[id]?.first ?: 0
+
+  fun merchantUsageCount(name: String): Int =
+    merchantUsageStats[name.trim().lowercase()]?.first ?: 0
+
   val activeClassificationsForCapture: List<ClassificationEntity>
-    get() = allClassifications.filter { it.isActive && it.typeId == capture.typeId }
+    get() {
+      val stats = classificationUsageStats
+      return allClassifications
+        .filter { it.isActive && it.typeId == capture.typeId }
+        .sortedWith(
+          compareByDescending<ClassificationEntity> { it.isPinned }
+            .thenByDescending { stats[it.id]?.first ?: 0 }
+            .thenByDescending { stats[it.id]?.second ?: 0L }
+            .thenBy { it.sortOrder }
+            .thenBy { it.id }
+        )
+    }
 
   val effectiveClassificationId: Long?
     get() {
@@ -125,7 +227,16 @@ data class FinanceUiState(
   val activeDetailsForCapture: List<DetailItemEntity>
     get() {
       val classId = effectiveClassificationId ?: return emptyList()
-      return allDetails.filter { it.isActive && it.classificationId == classId }
+      val stats = detailUsageStats
+      return allDetails
+        .filter { it.isActive && it.classificationId == classId }
+        .sortedWith(
+          compareByDescending<DetailItemEntity> { it.isPinned }
+            .thenByDescending { stats[it.id]?.first ?: 0 }
+            .thenByDescending { stats[it.id]?.second ?: 0L }
+            .thenBy { it.sortOrder }
+            .thenBy { it.id }
+        )
     }
 
   val effectiveDetailId: Long?
@@ -135,7 +246,18 @@ data class FinanceUiState(
     }
 
   val activeAccounts: List<AccountEntity>
-    get() = allAccounts.filter { it.isActive }
+    get() {
+      val stats = accountUsageStats
+      return allAccounts
+        .filter { it.isActive }
+        .sortedWith(
+          compareByDescending<AccountEntity> { it.isPinned }
+            .thenByDescending { stats[it.id]?.first ?: 0 }
+            .thenByDescending { stats[it.id]?.second ?: 0L }
+            .thenBy { it.sortOrder }
+            .thenBy { it.id }
+        )
+    }
 
   val effectiveAccountId: Long?
     get() {
@@ -144,7 +266,18 @@ data class FinanceUiState(
     }
 
   val activeMerchants: List<MerchantEntity>
-    get() = allMerchants.filter { it.isActive }
+    get() {
+      val stats = merchantUsageStats
+      return allMerchants
+        .filter { it.isActive }
+        .sortedWith(
+          compareByDescending<MerchantEntity> { it.isPinned }
+            .thenByDescending { stats[it.name.trim().lowercase()]?.first ?: 0 }
+            .thenByDescending { stats[it.name.trim().lowercase()]?.second ?: 0L }
+            .thenBy { it.sortOrder }
+            .thenBy { it.name }
+        )
+    }
 
   val canSaveCapture: Boolean
     get() =
@@ -258,7 +391,8 @@ data class FinanceUiState(
           val isConfirmed = rule.lastConfirmedPeriodKey == targetPeriod.key
           val isSnoozed =
             rule.snoozedUntilEpochDay != null && rule.snoozedUntilEpochDay > todayEpoch
-          val isWithinWindow = targetDay <= todayYmd.day + 2 || rule.isEndOfMonth && todayYmd.day >= daysInMonth - 2
+          val isWithinWindow =
+            targetDay <= todayYmd.day + 2 || rule.isEndOfMonth && todayYmd.day >= daysInMonth - 2
 
           if (!isConfirmed && !isSnoozed && isWithinWindow) {
             val dayDesc =
@@ -280,8 +414,10 @@ data class FinanceUiState(
 }
 
 class FinanceViewModel(application: Application) : AndroidViewModel(application) {
-  private val repository: FinanceRepository =
-    FinanceRepository(AppDatabase.getInstance(application).financeDao())
+  private val dao = AppDatabase.getInstance(application).financeDao()
+  private val repository = FinanceRepository(dao)
+  private val connectivityMonitor: ConnectivityMonitor = WifiConnectivityObserver(application)
+  private val syncManager = SyncManager(dao = dao, transport = OkHttpSyncTransport())
 
   private val currentTab = MutableStateFlow(MainTab.CAPTURAR)
   private val adminSubSection = MutableStateFlow(AdminSubSection.HUB)
@@ -297,15 +433,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
   private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
   val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
 
+  private var wasWifiConnected = false
+  private var wifiSessionEpoch = 0
+  private var lastAutoSyncAttemptKey: String? = null
+
   private val catalogFlows =
     combine(
+      repository.types,
       repository.classifications,
       repository.details,
       repository.accounts,
-      repository.merchants,
-      repository.scheduledRules,
-    ) { classifications, details, accounts, merchants, rules ->
-      CatalogSnapshot(classifications, details, accounts, merchants, rules)
+      combine(repository.merchants, repository.scheduledRules) { m, r -> m to r },
+    ) { types, classifications, details, accounts, merchantsAndRules ->
+      CatalogSnapshot(
+        types = types,
+        classifications = classifications,
+        details = details,
+        accounts = accounts,
+        merchants = merchantsAndRules.first,
+        rules = merchantsAndRules.second,
+      )
     }
 
   private val uiControlFlows =
@@ -321,13 +468,35 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       UiControlSnapshot(tab, adminSub, capture, period, filters.first, filters.second, filters.third)
     }
 
+  private val syncFlows =
+    combine(
+      connectivityMonitor.connectivityState,
+      repository.syncSettings,
+      repository.pendingSyncQueue,
+      repository.allSyncQueue,
+      syncManager.runtimeStatus,
+    ) { wifi, settings, pendingQueue, queueHistory, runtime ->
+      SyncSnapshot(
+        wifiState = wifi,
+        settings = settings ?: SyncSettingsEntity(),
+        pendingQueue = pendingQueue,
+        queueHistory = queueHistory,
+        runtimeStatus = runtime,
+      )
+    }
+
   val uiState: StateFlow<FinanceUiState> =
-    combine(catalogFlows, repository.transactions, uiControlFlows) { catalogs, txs, controls ->
+    combine(catalogFlows, repository.transactions, uiControlFlows, syncFlows) {
+        catalogs,
+        txs,
+        controls,
+        sync ->
         FinanceUiState(
           isLoaded = true,
           currentTab = controls.tab,
           adminSubSection = controls.adminSub,
           capture = controls.capture,
+          allTypes = catalogs.types,
           allClassifications = catalogs.classifications,
           allDetails = catalogs.details,
           allAccounts = catalogs.accounts,
@@ -338,6 +507,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
           selectedAccountFilterId = controls.accountFilterId,
           searchQuery = controls.searchQuery,
           statsShowIncome = controls.statsShowIncome,
+          wifiState = sync.wifiState,
+          syncSettings = sync.settings,
+          pendingSyncQueue = sync.pendingQueue,
+          syncQueueHistory = sync.queueHistory,
+          syncRuntimeStatus = sync.runtimeStatus,
         )
       }
       .stateIn(
@@ -348,6 +522,73 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
   init {
     viewModelScope.launch { repository.ensureSeeded() }
+    observeWifiForAutoSync()
+  }
+
+  private fun observeWifiForAutoSync() {
+    viewModelScope.launch {
+      combine(
+          connectivityMonitor.connectivityState,
+          repository.syncSettings,
+          repository.pendingSyncQueue,
+          repository.transactions,
+        ) { wifi, settings, pendingQueue, txs ->
+          val effectiveSettings = settings ?: SyncSettingsEntity()
+          val queuedTxIds =
+            pendingQueue
+              .filter { it.entityType == SyncEntityTypes.TRANSACTION }
+              .map { it.entityId }
+              .toSet()
+          val unqueuedUnsyncedTx =
+            txs.count { it.syncStatus != SyncStatus.SYNCED && it.id !in queuedTxIds }
+          val pendingCount = pendingQueue.size + unqueuedUnsyncedTx
+          val maxQueueId = pendingQueue.maxOfOrNull { it.id } ?: 0L
+          AutoSyncTriggerState(
+            isWifiConnected = wifi.isWifiConnected,
+            autoSyncOnWifi = effectiveSettings.autoSyncOnWifi,
+            apiEndpointUrl = effectiveSettings.apiEndpointUrl,
+            pendingCount = pendingCount,
+            maxQueueId = maxQueueId,
+          )
+        }
+        .distinctUntilChanged()
+        .collect { trigger ->
+          if (trigger.isWifiConnected && !wasWifiConnected) {
+            wifiSessionEpoch++
+          }
+          wasWifiConnected = trigger.isWifiConnected
+
+          syncManager.refreshIdleStatus(
+            isWifiConnected = trigger.isWifiConnected,
+            pendingCount = trigger.pendingCount,
+            apiUrlConfigured = trigger.apiEndpointUrl.isNotBlank(),
+          )
+
+          if (
+            trigger.isWifiConnected &&
+              trigger.autoSyncOnWifi &&
+              trigger.pendingCount > 0 &&
+              trigger.apiEndpointUrl.isNotBlank()
+          ) {
+            val attemptKey =
+              "${wifiSessionEpoch}_${trigger.maxQueueId}_${trigger.pendingCount}_${trigger.apiEndpointUrl}"
+            if (attemptKey != lastAutoSyncAttemptKey) {
+              lastAutoSyncAttemptKey = attemptKey
+              val result = syncManager.syncPendingIfReady(isWifiConnected = true)
+              if (result.phase == SyncPhase.SYNCED && result.lastSentCount > 0) {
+                _snackbarMessages.tryEmit(
+                  "Sincronización Wi-Fi automática: ${result.lastSentCount} registros enviados"
+                )
+              }
+            }
+          }
+        }
+    }
+  }
+
+  override fun onCleared() {
+    connectivityMonitor.stop()
+    super.onCleared()
   }
 
   // --- Navigation ---
@@ -449,11 +690,18 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     captureForm.update { it.copy(amountInput = "") }
   }
 
-  fun applyIncomeShortcut(amountText: String, classificationName: String, detailName: String, accountKind: String?) {
+  fun applyIncomeShortcut(
+    amountText: String,
+    classificationName: String,
+    detailName: String,
+    accountKind: String?,
+  ) {
     val state = uiState.value
     val cls =
       state.allClassifications.firstOrNull {
-        it.isActive && it.typeId == TransactionTypes.INGRESO && it.name.equals(classificationName, ignoreCase = true)
+        it.isActive &&
+          it.typeId == TransactionTypes.INGRESO &&
+          it.name.equals(classificationName, ignoreCase = true)
       }
     val det =
       cls?.let { c ->
@@ -486,11 +734,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val fiscalPeriod = state.capture.fiscalPeriod
     val merchant = state.capture.merchantName.trim().ifEmpty { null }
     val note = state.capture.note.trim().ifEmpty { null }
+    val now = System.currentTimeMillis()
 
     val tx =
       FinanceTransactionEntity(
         id = UUID.randomUUID().toString(),
-        createdAtMillis = System.currentTimeMillis(),
+        createdAtMillis = now,
         operationEpochDay = state.capture.operationEpochDay,
         fiscalPeriodKey = fiscalPeriod.key,
         fiscalPeriodLabel = fiscalPeriod.label,
@@ -501,6 +750,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         merchantName = merchant,
         amountCents = amountCents,
         note = note,
+        updatedAtMillis = now,
+        syncStatus = SyncStatus.PENDING,
+        syncedAtMillis = null,
       )
 
     viewModelScope.launch {
@@ -524,10 +776,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     if (amount <= 0L) return
     val today = FiscalPeriodCalculator.todayEpochDay()
     val period = FiscalPeriodCalculator.computeFiscalPeriod(today)
+    val now = System.currentTimeMillis()
     val tx =
       FinanceTransactionEntity(
         id = UUID.randomUUID().toString(),
-        createdAtMillis = System.currentTimeMillis(),
+        createdAtMillis = now,
         operationEpochDay = today,
         fiscalPeriodKey = pending.targetFiscalPeriod.key,
         fiscalPeriodLabel = pending.targetFiscalPeriod.label,
@@ -538,6 +791,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         merchantName = pending.rule.merchantName ?: pending.rule.title,
         amountCents = amount,
         note = "Confirmado de programado: ${pending.rule.title}",
+        updatedAtMillis = now,
+        syncStatus = SyncStatus.PENDING,
+        syncedAtMillis = null,
       )
     viewModelScope.launch {
       repository.confirmScheduledRule(pending.rule, tx, pending.targetFiscalPeriod.key)
@@ -553,10 +809,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     if (amount <= 0L) return
     val today = FiscalPeriodCalculator.todayEpochDay()
     val period = FiscalPeriodCalculator.computeFiscalPeriod(today)
+    val now = System.currentTimeMillis()
     val tx =
       FinanceTransactionEntity(
         id = UUID.randomUUID().toString(),
-        createdAtMillis = System.currentTimeMillis(),
+        createdAtMillis = now,
         operationEpochDay = today,
         fiscalPeriodKey = period.key,
         fiscalPeriodLabel = period.label,
@@ -567,10 +824,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         merchantName = rule.merchantName ?: rule.title,
         amountCents = amount,
         note = "Confirmado de programado: ${rule.title}",
+        updatedAtMillis = now,
+        syncStatus = SyncStatus.PENDING,
+        syncedAtMillis = null,
       )
     viewModelScope.launch {
       repository.confirmScheduledRule(rule, tx, period.key)
-      _snackbarMessages.tryEmit("Confirmado: ${rule.title} (${FiscalPeriodCalculator.formatMxn(amount)})")
+      _snackbarMessages.tryEmit(
+        "Confirmado: ${rule.title} (${FiscalPeriodCalculator.formatMxn(amount)})"
+      )
     }
   }
 
@@ -698,7 +960,193 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  // --- Backup & Reset ---
+  // --- Inline Quick-Create & Pin Favorites (v1.1 Ergonomics) ---
+  fun quickCreateClassification(name: String) {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return
+    val state = uiState.value
+    val typeId = state.capture.typeId
+    val existing =
+      state.allClassifications.firstOrNull {
+        it.typeId == typeId && it.name.equals(trimmed, ignoreCase = true)
+      }
+    viewModelScope.launch {
+      if (existing != null) {
+        val reactivated = if (!existing.isActive) existing.copy(isActive = true) else existing
+        if (reactivated != existing) repository.saveClassification(reactivated)
+        selectClassification(reactivated.id)
+        _snackbarMessages.tryEmit("Clasificación \"${reactivated.name}\" seleccionada")
+        return@launch
+      }
+      val nextOrder = (state.allClassifications.maxOfOrNull { it.sortOrder } ?: 0) + 1
+      val newClassId =
+        repository.saveClassification(
+          ClassificationEntity(
+            typeId = typeId,
+            name = trimmed,
+            sortOrder = nextOrder,
+            isActive = true,
+            isPinned = true,
+          )
+        )
+      val newDetailId =
+        repository.saveDetail(
+          DetailItemEntity(
+            classificationId = newClassId,
+            name = "General",
+            sortOrder = 1,
+            isActive = true,
+          )
+        )
+      captureForm.update {
+        it.copy(selectedClassificationId = newClassId, selectedDetailId = newDetailId)
+      }
+      _snackbarMessages.tryEmit("Clasificación \"$trimmed\" creada")
+    }
+  }
+
+  fun quickCreateDetail(name: String) {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return
+    val state = uiState.value
+    val classId = state.effectiveClassificationId ?: return
+    val existing =
+      state.allDetails.firstOrNull {
+        it.classificationId == classId && it.name.equals(trimmed, ignoreCase = true)
+      }
+    viewModelScope.launch {
+      if (existing != null) {
+        val reactivated = if (!existing.isActive) existing.copy(isActive = true) else existing
+        if (reactivated != existing) repository.saveDetail(reactivated)
+        selectDetail(reactivated.id)
+        _snackbarMessages.tryEmit("Detalle \"${reactivated.name}\" seleccionado")
+        return@launch
+      }
+      val nextOrder =
+        (state.allDetails.filter { it.classificationId == classId }.maxOfOrNull { it.sortOrder } ?: 0) + 1
+      val newDetailId =
+        repository.saveDetail(
+          DetailItemEntity(
+            classificationId = classId,
+            name = trimmed,
+            sortOrder = nextOrder,
+            isActive = true,
+            isPinned = true,
+          )
+        )
+      captureForm.update { it.copy(selectedDetailId = newDetailId) }
+      _snackbarMessages.tryEmit("Detalle \"$trimmed\" creado")
+    }
+  }
+
+  fun togglePinClassification(classificationId: Long) {
+    val item = uiState.value.allClassifications.firstOrNull { it.id == classificationId } ?: return
+    viewModelScope.launch {
+      val updated = item.copy(isPinned = !item.isPinned)
+      repository.saveClassification(updated)
+      _snackbarMessages.tryEmit(
+        if (updated.isPinned) "${updated.name} fijado en accesos rápidos"
+        else "${updated.name} desfijado"
+      )
+    }
+  }
+
+  fun togglePinDetail(detailId: Long) {
+    val item = uiState.value.allDetails.firstOrNull { it.id == detailId } ?: return
+    viewModelScope.launch {
+      val updated = item.copy(isPinned = !item.isPinned)
+      repository.saveDetail(updated)
+      _snackbarMessages.tryEmit(
+        if (updated.isPinned) "${updated.name} fijado en accesos rápidos"
+        else "${updated.name} desfijado"
+      )
+    }
+  }
+
+  fun togglePinAccount(accountId: Long) {
+    val item = uiState.value.allAccounts.firstOrNull { it.id == accountId } ?: return
+    viewModelScope.launch {
+      val updated = item.copy(isPinned = !item.isPinned)
+      repository.saveAccount(updated)
+      _snackbarMessages.tryEmit(
+        if (updated.isPinned) "${updated.shortLabel} fijada en accesos rápidos"
+        else "${updated.shortLabel} desfijada"
+      )
+    }
+  }
+
+  fun togglePinMerchant(merchantId: Long) {
+    val item = uiState.value.allMerchants.firstOrNull { it.id == merchantId } ?: return
+    viewModelScope.launch {
+      val updated = item.copy(isPinned = !item.isPinned)
+      repository.saveMerchant(updated)
+      _snackbarMessages.tryEmit(
+        if (updated.isPinned) "${updated.name} fijado en favoritos"
+        else "${updated.name} desfijado"
+      )
+    }
+  }
+
+  // --- Sync & API Settings ---
+  fun saveSyncConfig(
+    endpointUrl: String,
+    authToken: String,
+    autoSyncOnWifi: Boolean,
+    deviceLabel: String,
+  ) {
+    viewModelScope.launch {
+      val current = uiState.value.syncSettings
+      val updated =
+        current.copy(
+          apiEndpointUrl = endpointUrl.trim(),
+          apiAuthToken = authToken.trim(),
+          autoSyncOnWifi = autoSyncOnWifi,
+          deviceLabel = deviceLabel.trim().ifEmpty { "Android" },
+        )
+      repository.saveSyncSettings(updated)
+      _snackbarMessages.tryEmit("Configuración de sincronización guardada")
+    }
+  }
+
+  fun triggerManualWifiSync() {
+    connectivityMonitor.refreshNow()
+    viewModelScope.launch {
+      val wifiConnected = connectivityMonitor.connectivityState.value.isWifiConnected
+      val status = syncManager.syncPendingIfReady(isWifiConnected = wifiConnected)
+      _snackbarMessages.tryEmit(status.message)
+    }
+  }
+
+  fun loadSyncBatchPreviewJson(onLoaded: (String) -> Unit) {
+    viewModelScope.launch {
+      val payload = syncManager.previewPendingBatchPayload()
+      onLoaded(payload.jsonString)
+    }
+  }
+
+  // --- Manual Exports (JSON Admin Config, JSON Captured Data, Full JSON, CSV) & Reset ---
+  fun generateAdminConfigJson(): String {
+    val state = uiState.value
+    return repository.buildAdminConfigJson(
+      types = state.allTypes,
+      classifications = state.allClassifications,
+      details = state.allDetails,
+      accounts = state.allAccounts,
+      merchants = state.allMerchants,
+      scheduledRules = state.allScheduledRules,
+    )
+  }
+
+  fun generateCapturedDataJson(): String {
+    val state = uiState.value
+    return repository.buildCapturedDataJson(
+      transactions = state.allTransactions,
+      classificationsById = state.classificationsById,
+      detailsById = state.detailsById,
+      accountsById = state.accountsById,
+    )
+  }
+
   fun generateCsvContent(): String {
     val state = uiState.value
     return repository.buildCsvBackup(
@@ -737,6 +1185,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 }
 
 private data class CatalogSnapshot(
+  val types: List<TransactionTypeEntity>,
   val classifications: List<ClassificationEntity>,
   val details: List<DetailItemEntity>,
   val accounts: List<AccountEntity>,
@@ -752,4 +1201,20 @@ private data class UiControlSnapshot(
   val accountFilterId: Long?,
   val searchQuery: String,
   val statsShowIncome: Boolean,
+)
+
+private data class SyncSnapshot(
+  val wifiState: WifiConnectivityState,
+  val settings: SyncSettingsEntity,
+  val pendingQueue: List<SyncQueueItemEntity>,
+  val queueHistory: List<SyncQueueItemEntity>,
+  val runtimeStatus: SyncRuntimeStatus,
+)
+
+private data class AutoSyncTriggerState(
+  val isWifiConnected: Boolean,
+  val autoSyncOnWifi: Boolean,
+  val apiEndpointUrl: String,
+  val pendingCount: Int,
+  val maxQueueId: Long,
 )
