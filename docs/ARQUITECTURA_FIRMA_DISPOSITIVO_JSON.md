@@ -1,5 +1,8 @@
 # Arquitectura Futura: Firma de JSON e Identificación por Dispositivo (Sin Login)
 
+> [!NOTE]
+> **Documento histórico:** La especificación oficial vigente para la integración con `backFinanceApp v0.4.0` (mensaje canónico con `METHOD|PATH_AND_QUERY`, `X-Enrollment-Token` y catálogo completo de APIs) se encuentra en [`02-guia-integracion-app-movil-seguridad-y-apis.md`](./02-guia-integracion-app-movil-seguridad-y-apis.md).
+
 > **Propósito:** Documento de referencia técnica para implementar en el futuro la identificación criptográfica por dispositivo, de modo que múltiples usuarios/dispositivos puedan sincronizar y consultar su propia información en un backend REST **sin sistema de login (usuario/contraseña)**.
 
 ---

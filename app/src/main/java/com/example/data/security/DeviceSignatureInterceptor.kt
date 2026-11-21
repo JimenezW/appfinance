@@ -13,7 +13,7 @@ data class DeviceAuthContext(
 )
 
 /**
- * OkHttp interceptor that signs every /api/v1/* request with ECDSA P-256 headers
+ * OkHttp interceptor that signs every /api/v1/ request with ECDSA P-256 headers
  * per backFinanceApp v0.4.0 DeviceSignatureAuth specification.
  */
 class DeviceSignatureInterceptor(
