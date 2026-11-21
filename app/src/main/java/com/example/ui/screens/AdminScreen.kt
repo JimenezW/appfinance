@@ -161,8 +161,8 @@ private fun AdminHubView(
 ) {
   val context = LocalContext.current
   val financeColors = LocalFinanceColors.current
-  val gastoCount = state.allClassifications.count { it.typeId == TransactionTypes.GASTO && it.isActive }
-  val ingresoCount = state.allClassifications.count { it.typeId == TransactionTypes.INGRESO && it.isActive }
+  val gastoCount = state.allClassifications.count { TransactionTypes.isExpense(it.typeId) && it.isActive }
+  val ingresoCount = state.allClassifications.count { TransactionTypes.isIncome(it.typeId) && it.isActive }
   var previewTitle by remember { mutableStateOf<String?>(null) }
   var previewContent by remember { mutableStateOf("") }
 

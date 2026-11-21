@@ -227,14 +227,15 @@ fun ClassificationsCrudView(
   modifier: Modifier = Modifier,
 ) {
   val financeColors = LocalFinanceColors.current
-  var selectedType by remember { mutableStateOf(TransactionTypes.GASTO) }
+  var selectedType by remember { mutableStateOf(TransactionTypes.GASTO_UUID) }
   var searchQuery by remember { mutableStateOf("") }
   var filterMode by remember { mutableStateOf(CatalogFilterMode.ALL) }
   var editingClass by remember { mutableStateOf<ClassificationEntity?>(null) }
   var addingNewClass by remember { mutableStateOf(false) }
   var managingDetailsFor by remember { mutableStateOf<ClassificationEntity?>(null) }
 
-  val byType = state.allClassifications.filter { it.typeId == selectedType }
+  val selectedTypeCode = TransactionTypes.codeFor(selectedType)
+  val byType = state.allClassifications.filter { TransactionTypes.codeFor(it.typeId) == selectedTypeCode }
   val activeByTypeCount = byType.count { it.isActive }
   val pinnedByTypeCount = byType.count { it.isPinned }
   val filtered =
@@ -259,7 +260,7 @@ fun ClassificationsCrudView(
           compareByDescending<ClassificationEntity> { it.isPinned }
             .thenByDescending { state.classificationUsageCount(it.id) }
             .thenBy { it.sortOrder }
-            .thenBy { it.id }
+            .thenBy { it.name }
         )
     }
 
@@ -274,10 +275,11 @@ fun ClassificationsCrudView(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
       horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-      listOf(TransactionTypes.GASTO to "Gasto", TransactionTypes.INGRESO to "Ingreso").forEach {
+      listOf(TransactionTypes.GASTO_UUID to "Gasto", TransactionTypes.INGRESO_UUID to "Ingreso").forEach {
         (tId, label) ->
         val sel = selectedType == tId
-        val count = state.allClassifications.count { it.typeId == tId && it.isActive }
+        val tCode = TransactionTypes.codeFor(tId)
+        val count = state.allClassifications.count { TransactionTypes.codeFor(it.typeId) == tCode && it.isActive }
         Surface(
           onClick = { selectedType = tId },
           shape = RoundedCornerShape(10.dp),
@@ -301,7 +303,7 @@ fun ClassificationsCrudView(
       onQueryChange = { searchQuery = it },
       filterMode = filterMode,
       onSelectFilter = { filterMode = it },
-      includeBudgetFilter = selectedType == TransactionTypes.GASTO,
+      includeBudgetFilter = TransactionTypes.isExpense(selectedType),
       totalCount = byType.size,
       activeCount = activeByTypeCount,
       pinnedCount = pinnedByTypeCount,
@@ -450,7 +452,7 @@ private fun ClassificationEditorDialog(
           singleLine = true,
           modifier = Modifier.fillMaxWidth(),
         )
-        if ((initial?.typeId ?: typeId) == TransactionTypes.GASTO) {
+        if (TransactionTypes.isExpense(initial?.typeId ?: typeId)) {
           OutlinedTextField(
             value = budgetText,
             onValueChange = { budgetText = it },
@@ -480,13 +482,14 @@ private fun ClassificationEditorDialog(
             else FiscalPeriodCalculator.parseAmountToCents(budgetText).takeIf { it > 0L }
           onSave(
             ClassificationEntity(
-              id = initial?.id ?: 0L,
+              id = initial?.id ?: "",
               typeId = initial?.typeId ?: typeId,
               name = name.trim(),
               sortOrder = initial?.sortOrder ?: 99,
               isActive = initial?.isActive ?: true,
               monthlyBudgetCents = budgetCents,
               isPinned = initial?.isPinned ?: false,
+              isDefault = initial?.isDefault ?: false,
             )
           )
         },
@@ -517,7 +520,7 @@ private fun DetailsManagerDialog(
       base.sortedWith(
         compareByDescending<DetailItemEntity> { it.isPinned }
           .thenBy { it.sortOrder }
-          .thenBy { it.id }
+          .thenBy { it.name }
       )
     }
 
@@ -542,9 +545,11 @@ private fun DetailsManagerDialog(
             onClick = {
               onSaveDetail(
                 DetailItemEntity(
+                  id = "",
                   classificationId = classification.id,
                   name = newDetailName.trim(),
                   sortOrder = details.size + 1,
+                  isDefault = false,
                 )
               )
               newDetailName = ""
@@ -832,14 +837,16 @@ private fun AccountEditorDialog(
           val finalCents = if (isNegative) -absCents else absCents
           onSave(
             AccountEntity(
-              id = initial?.id ?: 0L,
+              id = initial?.id ?: "",
               name = name.trim(),
               shortLabel = shortLabel.trim().ifEmpty { name.trim().take(12) },
               balanceCents = finalCents,
+              currency = initial?.currency ?: "MXN",
               accountKind = initial?.accountKind ?: "DEBIT",
               sortOrder = initial?.sortOrder ?: 99,
               isActive = initial?.isActive ?: true,
               isPinned = initial?.isPinned ?: false,
+              isDefault = initial?.isDefault ?: false,
             )
           )
         },
@@ -1001,11 +1008,12 @@ fun MerchantsCrudView(
           onClick = {
             onSaveMerchant(
               MerchantEntity(
-                id = editing?.id ?: 0L,
+                id = editing?.id ?: "",
                 name = name.trim(),
                 sortOrder = editing?.sortOrder ?: 99,
                 isActive = editing?.isActive ?: true,
                 isPinned = editing?.isPinned ?: false,
+                isDefault = editing?.isDefault ?: false,
               )
             )
             adding = false

@@ -92,9 +92,9 @@ import com.example.ui.theme.MonoFontFamily
 fun CaptureScreen(
   state: FinanceUiState,
   onSelectType: (String) -> Unit,
-  onSelectClassification: (Long) -> Unit,
-  onSelectDetail: (Long) -> Unit,
-  onSelectAccount: (Long) -> Unit,
+  onSelectClassification: (String) -> Unit,
+  onSelectDetail: (String) -> Unit,
+  onSelectAccount: (String) -> Unit,
   onSelectDate: (Long) -> Unit,
   onSelectMerchant: (String) -> Unit,
   onToggleNoteField: (Boolean) -> Unit,
@@ -111,10 +111,10 @@ fun CaptureScreen(
   onOpenSyncAdmin: () -> Unit,
   onQuickCreateClassification: (String) -> Unit = {},
   onQuickCreateDetail: (String) -> Unit = {},
-  onTogglePinClassification: (Long) -> Unit = {},
-  onTogglePinDetail: (Long) -> Unit = {},
-  onTogglePinAccount: (Long) -> Unit = {},
-  onTogglePinMerchant: (Long) -> Unit = {},
+  onTogglePinClassification: (String) -> Unit = {},
+  onTogglePinDetail: (String) -> Unit = {},
+  onTogglePinAccount: (String) -> Unit = {},
+  onTogglePinMerchant: (String) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   var showDatePicker by remember { mutableStateOf(false) }
@@ -169,13 +169,13 @@ fun CaptureScreen(
           AccountSelectorStrip(
             accounts = state.activeAccounts,
             selectedAccountId = state.effectiveAccountId,
-            isIncome = state.capture.typeId == TransactionTypes.INGRESO,
+            isIncome = TransactionTypes.isIncome(state.capture.typeId),
             onSelectAccount = onSelectAccount,
             onOpenAccountPicker = { showAccountSheet = true },
             onOpenAccountsAdmin = onOpenAccountsAdmin,
           )
           MerchantAndNoteBar(
-            isIncome = state.capture.typeId == TransactionTypes.INGRESO,
+            isIncome = TransactionTypes.isIncome(state.capture.typeId),
             merchantName = state.capture.merchantName,
             showNoteField = state.capture.showNoteField,
             note = state.capture.note,
@@ -271,14 +271,14 @@ fun CaptureScreen(
           AccountSelectorStrip(
             accounts = state.activeAccounts,
             selectedAccountId = state.effectiveAccountId,
-            isIncome = state.capture.typeId == TransactionTypes.INGRESO,
+            isIncome = TransactionTypes.isIncome(state.capture.typeId),
             onSelectAccount = onSelectAccount,
             onOpenAccountPicker = { showAccountSheet = true },
             onOpenAccountsAdmin = onOpenAccountsAdmin,
           )
 
           MerchantAndNoteBar(
-            isIncome = state.capture.typeId == TransactionTypes.INGRESO,
+            isIncome = TransactionTypes.isIncome(state.capture.typeId),
             merchantName = state.capture.merchantName,
             showNoteField = state.capture.showNoteField,
             note = state.capture.note,
@@ -362,7 +362,7 @@ fun CaptureScreen(
 
   if (showMerchantSheet) {
     MerchantPickerBottomSheet(
-      isIncome = state.capture.typeId == TransactionTypes.INGRESO,
+      isIncome = TransactionTypes.isIncome(state.capture.typeId),
       merchants = state.activeMerchants,
       usageCountFor = { state.merchantUsageCount(it.name) },
       currentValue = state.capture.merchantName,
@@ -376,7 +376,7 @@ fun CaptureScreen(
   }
 
   if (showClassificationSheet) {
-    val isExpense = state.capture.typeId == TransactionTypes.GASTO
+    val isExpense = TransactionTypes.isExpense(state.capture.typeId)
     val accent = if (isExpense) LocalFinanceColors.current.expenseAccent else LocalFinanceColors.current.incomeAccent
     val container = if (isExpense) LocalFinanceColors.current.expenseContainer else LocalFinanceColors.current.incomeContainer
     val options =
@@ -414,7 +414,7 @@ fun CaptureScreen(
   }
 
   if (showDetailSheet) {
-    val isExpense = state.capture.typeId == TransactionTypes.GASTO
+    val isExpense = TransactionTypes.isExpense(state.capture.typeId)
     val accent = if (isExpense) LocalFinanceColors.current.expenseAccent else LocalFinanceColors.current.incomeAccent
     val container = if (isExpense) LocalFinanceColors.current.expenseContainer else LocalFinanceColors.current.incomeContainer
     val selectedClassName =
@@ -452,7 +452,7 @@ fun CaptureScreen(
   }
 
   if (showAccountSheet) {
-    val isExpense = state.capture.typeId == TransactionTypes.GASTO
+    val isExpense = TransactionTypes.isExpense(state.capture.typeId)
     val accent = if (isExpense) LocalFinanceColors.current.expenseAccent else LocalFinanceColors.current.incomeAccent
     val container = if (isExpense) LocalFinanceColors.current.expenseContainer else LocalFinanceColors.current.incomeContainer
     val options =
@@ -567,16 +567,16 @@ private fun TypeSegmentedControl(
     Row(modifier = Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
       TypeSegmentOption(
         label = "Gasto",
-        selected = selectedType == TransactionTypes.GASTO,
+        selected = TransactionTypes.isExpense(selectedType),
         accentColor = financeColors.expenseAccent,
-        onClick = { onSelectType(TransactionTypes.GASTO) },
+        onClick = { onSelectType(TransactionTypes.GASTO_UUID) },
         modifier = Modifier.weight(1f).testTag("type_toggle_gasto"),
       )
       TypeSegmentOption(
         label = "Ingreso",
-        selected = selectedType == TransactionTypes.INGRESO,
+        selected = TransactionTypes.isIncome(selectedType),
         accentColor = financeColors.incomeAccent,
-        onClick = { onSelectType(TransactionTypes.INGRESO) },
+        onClick = { onSelectType(TransactionTypes.INGRESO_UUID) },
         modifier = Modifier.weight(1f).testTag("type_toggle_ingreso"),
       )
     }
@@ -632,7 +632,7 @@ private fun AmountDisplayCard(
   onClear: () -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isExpense = typeId == TransactionTypes.GASTO
+  val isExpense = TransactionTypes.isExpense(typeId)
   val accentColor by
     animateColorAsState(
       targetValue = if (isExpense) financeColors.expenseAccent else financeColors.incomeAccent,
@@ -779,14 +779,14 @@ private fun DateAndFiscalPeriodRow(
 @Composable
 private fun CascadingClassificationsAndDetails(
   state: FinanceUiState,
-  onSelectClassification: (Long) -> Unit,
-  onSelectDetail: (Long) -> Unit,
+  onSelectClassification: (String) -> Unit,
+  onSelectDetail: (String) -> Unit,
   onOpenClassificationPicker: () -> Unit,
   onOpenDetailPicker: () -> Unit,
   onApplyIncomeShortcut: (String, String, String, String?) -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isExpense = state.capture.typeId == TransactionTypes.GASTO
+  val isExpense = TransactionTypes.isExpense(state.capture.typeId)
   val accentColor = if (isExpense) financeColors.expenseAccent else financeColors.incomeAccent
   val containerColor = if (isExpense) financeColors.expenseContainer else financeColors.incomeContainer
 
@@ -927,9 +927,9 @@ private fun CascadingClassificationsAndDetails(
 
 private fun <T> buildQuickPreviewList(
   all: List<T>,
-  selectedId: Long?,
+  selectedId: String?,
   maxCount: Int,
-  idSelector: (T) -> Long,
+  idSelector: (T) -> String,
 ): List<T> {
   if (all.size <= maxCount) return all
   val selectedItem = selectedId?.let { id -> all.firstOrNull { idSelector(it) == id } }
@@ -1114,9 +1114,9 @@ private fun IncomeShortcutChip(
 @Composable
 private fun AccountSelectorStrip(
   accounts: List<AccountEntity>,
-  selectedAccountId: Long?,
+  selectedAccountId: String?,
   isIncome: Boolean,
-  onSelectAccount: (Long) -> Unit,
+  onSelectAccount: (String) -> Unit,
   onOpenAccountPicker: () -> Unit,
   onOpenAccountsAdmin: () -> Unit,
 ) {
@@ -1317,7 +1317,7 @@ private fun SaveTransactionButton(
   onClick: () -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isExpense = typeId == TransactionTypes.GASTO
+  val isExpense = TransactionTypes.isExpense(typeId)
   val containerColor by
     animateColorAsState(
       targetValue = if (isExpense) financeColors.expenseAccent else financeColors.incomeAccent,
@@ -1361,7 +1361,7 @@ private fun MerchantPickerBottomSheet(
   merchants: List<MerchantEntity>,
   usageCountFor: (MerchantEntity) -> Int,
   currentValue: String,
-  onTogglePinMerchant: (Long) -> Unit,
+  onTogglePinMerchant: (String) -> Unit,
   onDismiss: () -> Unit,
   onSelectMerchant: (String) -> Unit,
 ) {

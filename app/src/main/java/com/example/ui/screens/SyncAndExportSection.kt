@@ -180,14 +180,16 @@ fun SyncAndExportView(
         val isSyncing = state.syncRuntimeStatus.phase == SyncPhase.SYNCING
         val statusColor =
           when {
-            state.syncRuntimeStatus.phase == SyncPhase.ERROR -> financeColors.expenseAccent
+            state.syncRuntimeStatus.phase == SyncPhase.ERROR ||
+              state.syncRuntimeStatus.phase == SyncPhase.REVOKED -> financeColors.expenseAccent
             isWifi && state.pendingSyncCount == 0 -> financeColors.incomeAccent
             isWifi -> financeColors.periodAccent
             else -> financeColors.pendingAccent
           }
         val containerColor =
           when {
-            state.syncRuntimeStatus.phase == SyncPhase.ERROR -> financeColors.expenseContainer
+            state.syncRuntimeStatus.phase == SyncPhase.ERROR ||
+              state.syncRuntimeStatus.phase == SyncPhase.REVOKED -> financeColors.expenseContainer
             isWifi && state.pendingSyncCount == 0 -> financeColors.incomeContainer
             isWifi -> financeColors.periodContainer
             else -> financeColors.pendingContainer
@@ -361,14 +363,30 @@ fun SyncAndExportView(
             }
             Text(
               text =
-                "Cuando desarrolles tu backend, coloca aquí la URL POST que recibirá el JSON de sincronización automática por Wi-Fi.",
+                "Configura la URL base de backFinanceApp (HTTPS en producción). Las peticiones se firman automáticamente con ECDSA P-256 desde AndroidKeyStore.",
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (state.syncSettings.deviceId.isNotBlank()) {
+              val enrollLabel =
+                when {
+                  state.syncSettings.isDeviceRevoked -> "REVOCADO"
+                  state.syncSettings.isDeviceEnrolled -> "Enrolado (ECDSA P-256)"
+                  else -> "Pendiente 1er contacto (TOFU)"
+                }
+              Text(
+                text = "Device ID: ${state.syncSettings.deviceId.take(8)}… • $enrollLabel",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = MonoFontFamily,
+                color =
+                  if (state.syncSettings.isDeviceRevoked) financeColors.expenseAccent
+                  else MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
             OutlinedTextField(
               value = apiUrlInput,
               onValueChange = { apiUrlInput = it },
-              label = { Text("URL Endpoint POST (ej. https://api.ejemplo.com/v1/sync)") },
+              label = { Text("URL Base del API (ej. https://tu-servidor.com)") },
               singleLine = true,
               modifier = Modifier.fillMaxWidth().testTag("api_endpoint_input"),
               shape = RoundedCornerShape(12.dp),
@@ -376,7 +394,7 @@ fun SyncAndExportView(
             OutlinedTextField(
               value = authTokenInput,
               onValueChange = { authTokenInput = it },
-              label = { Text("Bearer Token / API Key (opcional)") },
+              label = { Text("Token de enrolamiento X-Enrollment-Token (1er contacto)") },
               singleLine = true,
               modifier = Modifier.fillMaxWidth().testTag("api_token_input"),
               shape = RoundedCornerShape(12.dp),

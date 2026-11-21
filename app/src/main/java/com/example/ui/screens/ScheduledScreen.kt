@@ -157,7 +157,7 @@ fun ScheduledScreen(
     items(state.allScheduledRules, key = { "rule_${it.id}" }) { rule ->
       val accLabel = state.accountsById[rule.accountId]?.shortLabel ?: "Cuenta"
       val clsLabel = state.classificationsById[rule.classificationId]?.name ?: ""
-      val isIncome = rule.typeId == TransactionTypes.INGRESO
+      val isIncome = TransactionTypes.isIncome(rule.typeId)
       val scheduleText =
         if (rule.isEndOfMonth) "Fin de mes" else "Día ${rule.dayOfMonth}"
 
@@ -287,7 +287,7 @@ private fun PendingActionCard(
   onSnooze: () -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isIncome = pending.rule.typeId == TransactionTypes.INGRESO
+  val isIncome = TransactionTypes.isIncome(pending.rule.typeId)
   val bg = if (isIncome) financeColors.incomeContainer else financeColors.pendingContainer
   val border = if (isIncome) financeColors.incomeAccent else financeColors.pendingAccent
   val amountColor = if (isIncome) financeColors.incomeAccent else financeColors.expenseAccent
@@ -451,13 +451,17 @@ private fun ScheduledRuleEditorSheet(
   val dayFieldBringIntoView = remember { BringIntoViewRequester() }
 
   var title by remember { mutableStateOf(initialRule?.title ?: "") }
-  var typeId by remember { mutableStateOf(initialRule?.typeId ?: TransactionTypes.GASTO) }
-  val availableClasses = state.allClassifications.filter { it.isActive && it.typeId == typeId }
+  var typeId by remember { mutableStateOf(initialRule?.typeId ?: TransactionTypes.GASTO_UUID) }
+  val selectedTypeCode = TransactionTypes.codeFor(typeId)
+  val availableClasses =
+    state.allClassifications.filter {
+      it.isActive && TransactionTypes.codeFor(it.typeId) == selectedTypeCode
+    }
   var classId by remember(typeId) {
     mutableStateOf(
       availableClasses.firstOrNull { it.id == initialRule?.classificationId }?.id
         ?: availableClasses.firstOrNull()?.id
-        ?: 0L
+        ?: ""
     )
   }
   val availableDetails = state.allDetails.filter { it.isActive && it.classificationId == classId }
@@ -465,14 +469,14 @@ private fun ScheduledRuleEditorSheet(
     mutableStateOf(
       availableDetails.firstOrNull { it.id == initialRule?.detailId }?.id
         ?: availableDetails.firstOrNull()?.id
-        ?: 0L
+        ?: ""
     )
   }
   var accountId by remember {
     mutableStateOf(
       state.activeAccounts.firstOrNull { it.id == initialRule?.accountId }?.id
         ?: state.activeAccounts.firstOrNull()?.id
-        ?: 0L
+        ?: ""
     )
   }
   var amountText by remember {
@@ -494,7 +498,7 @@ private fun ScheduledRuleEditorSheet(
   var showAccountPicker by remember { mutableStateOf(false) }
 
   val financeColors = LocalFinanceColors.current
-  val isIncome = typeId == TransactionTypes.INGRESO
+  val isIncome = TransactionTypes.isIncome(typeId)
   val accentColor = if (isIncome) financeColors.incomeAccent else financeColors.expenseAccent
   val containerColor =
     if (isIncome) financeColors.incomeContainer else financeColors.expenseContainer
@@ -599,9 +603,9 @@ private fun ScheduledRuleEditorSheet(
       }
 
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(TransactionTypes.GASTO to "Gasto", TransactionTypes.INGRESO to "Ingreso").forEach {
+        listOf(TransactionTypes.GASTO_UUID to "Gasto", TransactionTypes.INGRESO_UUID to "Ingreso").forEach {
           (tId, label) ->
-          val sel = typeId == tId
+          val sel = TransactionTypes.codeFor(typeId) == TransactionTypes.codeFor(tId)
           Surface(
             onClick = { typeId = tId },
             shape = RoundedCornerShape(10.dp),
@@ -655,7 +659,7 @@ private fun ScheduledRuleEditorSheet(
         onClick = {
           onSave(
             ScheduledRuleEntity(
-              id = initialRule?.id ?: 0L,
+              id = initialRule?.id ?: "",
               title = title.trim(),
               typeId = typeId,
               classificationId = classId,
@@ -668,6 +672,7 @@ private fun ScheduledRuleEditorSheet(
               isActive = initialRule?.isActive ?: true,
               lastConfirmedPeriodKey = initialRule?.lastConfirmedPeriodKey,
               snoozedUntilEpochDay = initialRule?.snoozedUntilEpochDay,
+              isDefault = initialRule?.isDefault ?: false,
             )
           )
         },
@@ -675,9 +680,9 @@ private fun ScheduledRuleEditorSheet(
           title.isNotBlank() &&
             amountCents > 0L &&
             isDayValid &&
-            classId > 0L &&
-            detailId > 0L &&
-            accountId > 0L,
+            classId.isNotBlank() &&
+            detailId.isNotBlank() &&
+            accountId.isNotBlank(),
         modifier = Modifier.fillMaxWidth().height(48.dp),
         shape = RoundedCornerShape(12.dp),
       ) {

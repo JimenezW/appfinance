@@ -15,6 +15,9 @@ interface FinanceDao {
   @Query("SELECT * FROM transaction_types ORDER BY sortOrder ASC")
   fun observeTypes(): Flow<List<TransactionTypeEntity>>
 
+  @Query("SELECT code FROM transaction_types WHERE id = :typeId LIMIT 1")
+  suspend fun getTransactionTypeCodeById(typeId: String): String?
+
   @Query("SELECT COUNT(*) FROM transaction_types")
   suspend fun countTypes(): Int
 
@@ -22,24 +25,34 @@ interface FinanceDao {
   suspend fun insertTypes(types: List<TransactionTypeEntity>)
 
   // --- Classifications ---
-  @Query("SELECT * FROM classifications ORDER BY typeId ASC, sortOrder ASC, id ASC")
+  @Query(
+    "SELECT * FROM classifications WHERE deletedAtMillis IS NULL ORDER BY typeId ASC, sortOrder ASC, name ASC"
+  )
   fun observeAllClassifications(): Flow<List<ClassificationEntity>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
-  suspend fun insertClassification(item: ClassificationEntity): Long
+  suspend fun insertClassification(item: ClassificationEntity)
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertClassifications(items: List<ClassificationEntity>)
 
   @Update
   suspend fun updateClassification(item: ClassificationEntity)
+
+  @Query("UPDATE classifications SET deletedAtMillis = :deletedAtMillis WHERE id = :id")
+  suspend fun softDeleteClassification(id: String, deletedAtMillis: Long)
 
   @Delete
   suspend fun deleteClassification(item: ClassificationEntity)
 
   // --- Detail Items ---
-  @Query("SELECT * FROM detail_items ORDER BY classificationId ASC, sortOrder ASC, id ASC")
+  @Query(
+    "SELECT * FROM detail_items WHERE deletedAtMillis IS NULL ORDER BY classificationId ASC, sortOrder ASC, name ASC"
+  )
   fun observeAllDetails(): Flow<List<DetailItemEntity>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
-  suspend fun insertDetail(item: DetailItemEntity): Long
+  suspend fun insertDetail(item: DetailItemEntity)
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertDetails(items: List<DetailItemEntity>)
@@ -47,15 +60,18 @@ interface FinanceDao {
   @Update
   suspend fun updateDetail(item: DetailItemEntity)
 
+  @Query("UPDATE detail_items SET deletedAtMillis = :deletedAtMillis WHERE id = :id")
+  suspend fun softDeleteDetail(id: String, deletedAtMillis: Long)
+
   @Delete
   suspend fun deleteDetail(item: DetailItemEntity)
 
   // --- Accounts ---
-  @Query("SELECT * FROM accounts ORDER BY sortOrder ASC, id ASC")
+  @Query("SELECT * FROM accounts WHERE deletedAtMillis IS NULL ORDER BY sortOrder ASC, name ASC")
   fun observeAllAccounts(): Flow<List<AccountEntity>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
-  suspend fun insertAccount(account: AccountEntity): Long
+  suspend fun insertAccount(account: AccountEntity)
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertAccounts(accounts: List<AccountEntity>)
@@ -63,21 +79,26 @@ interface FinanceDao {
   @Update
   suspend fun updateAccount(account: AccountEntity)
 
+  @Query("UPDATE accounts SET deletedAtMillis = :deletedAtMillis WHERE id = :id")
+  suspend fun softDeleteAccount(id: String, deletedAtMillis: Long)
+
   @Delete
   suspend fun deleteAccount(account: AccountEntity)
 
   @Query("UPDATE accounts SET balanceCents = balanceCents + :deltaCents WHERE id = :accountId")
-  suspend fun adjustAccountBalance(accountId: Long, deltaCents: Long)
+  suspend fun adjustAccountBalance(accountId: String, deltaCents: Long)
 
   // --- Merchants ---
-  @Query("SELECT * FROM merchants ORDER BY sortOrder ASC, name ASC")
+  @Query("SELECT * FROM merchants WHERE deletedAtMillis IS NULL ORDER BY sortOrder ASC, name ASC")
   fun observeAllMerchants(): Flow<List<MerchantEntity>>
 
-  @Query("SELECT * FROM merchants WHERE LOWER(name) = LOWER(:name) LIMIT 1")
+  @Query(
+    "SELECT * FROM merchants WHERE deletedAtMillis IS NULL AND LOWER(name) = LOWER(:name) LIMIT 1"
+  )
   suspend fun findMerchantByName(name: String): MerchantEntity?
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
-  suspend fun insertMerchant(merchant: MerchantEntity): Long
+  suspend fun insertMerchant(merchant: MerchantEntity)
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertMerchants(merchants: List<MerchantEntity>)
@@ -85,15 +106,20 @@ interface FinanceDao {
   @Update
   suspend fun updateMerchant(merchant: MerchantEntity)
 
+  @Query("UPDATE merchants SET deletedAtMillis = :deletedAtMillis WHERE id = :id")
+  suspend fun softDeleteMerchant(id: String, deletedAtMillis: Long)
+
   @Delete
   suspend fun deleteMerchant(merchant: MerchantEntity)
 
   // --- Scheduled Rules ---
-  @Query("SELECT * FROM scheduled_rules ORDER BY dayOfMonth ASC, id ASC")
+  @Query(
+    "SELECT * FROM scheduled_rules WHERE deletedAtMillis IS NULL ORDER BY dayOfMonth ASC, title ASC"
+  )
   fun observeAllScheduledRules(): Flow<List<ScheduledRuleEntity>>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
-  suspend fun insertScheduledRule(rule: ScheduledRuleEntity): Long
+  suspend fun insertScheduledRule(rule: ScheduledRuleEntity)
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertScheduledRules(rules: List<ScheduledRuleEntity>)
@@ -101,21 +127,36 @@ interface FinanceDao {
   @Update
   suspend fun updateScheduledRule(rule: ScheduledRuleEntity)
 
+  @Query("UPDATE scheduled_rules SET deletedAtMillis = :deletedAtMillis WHERE id = :id")
+  suspend fun softDeleteScheduledRule(id: String, deletedAtMillis: Long)
+
   @Delete
   suspend fun deleteScheduledRule(rule: ScheduledRuleEntity)
 
   // --- Transactions ---
-  @Query("SELECT * FROM finance_transactions ORDER BY operationEpochDay DESC, createdAtMillis DESC")
+  @Query(
+    "SELECT * FROM finance_transactions WHERE deletedAtMillis IS NULL ORDER BY operationEpochDay DESC, createdAtMillis DESC"
+  )
   fun observeAllTransactions(): Flow<List<FinanceTransactionEntity>>
 
-  @Query("SELECT * FROM finance_transactions ORDER BY operationEpochDay DESC, createdAtMillis DESC")
+  @Query(
+    "SELECT * FROM finance_transactions WHERE deletedAtMillis IS NULL ORDER BY operationEpochDay DESC, createdAtMillis DESC"
+  )
   suspend fun getAllTransactionsOnce(): List<FinanceTransactionEntity>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertTransactionRaw(tx: FinanceTransactionEntity)
 
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertTransactions(txs: List<FinanceTransactionEntity>)
+
   @Update
   suspend fun updateTransactionRaw(tx: FinanceTransactionEntity)
+
+  @Query(
+    "UPDATE finance_transactions SET deletedAtMillis = :deletedAtMillis, updatedAtMillis = :deletedAtMillis WHERE id = :id"
+  )
+  suspend fun softDeleteTransactionRaw(id: String, deletedAtMillis: Long)
 
   @Delete
   suspend fun deleteTransactionRaw(tx: FinanceTransactionEntity)
@@ -151,7 +192,9 @@ interface FinanceDao {
   @Query("SELECT * FROM sync_queue WHERE syncStatus != 'SYNCED' ORDER BY createdAtMillis ASC")
   suspend fun getPendingSyncQueueOnce(): List<SyncQueueItemEntity>
 
-  @Query("SELECT * FROM finance_transactions WHERE syncStatus != 'SYNCED' ORDER BY createdAtMillis ASC")
+  @Query(
+    "SELECT * FROM finance_transactions WHERE deletedAtMillis IS NULL AND syncStatus != 'SYNCED' ORDER BY createdAtMillis ASC"
+  )
   suspend fun getPendingTransactionsOnce(): List<FinanceTransactionEntity>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -189,11 +232,17 @@ interface FinanceDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertSyncSettings(settings: SyncSettingsEntity)
 
+  private suspend fun isIncomeType(typeId: String): Boolean {
+    val dbCode = getTransactionTypeCodeById(typeId)
+    return if (dbCode != null) dbCode.equals(TransactionTypes.INGRESO, ignoreCase = true)
+    else TransactionTypes.isIncome(typeId)
+  }
+
   // --- Atomic Operations ---
   @Transaction
   suspend fun insertTransactionAndUpdateBalance(tx: FinanceTransactionEntity) {
     insertTransactionRaw(tx)
-    val delta = if (tx.typeId == TransactionTypes.INGRESO) tx.amountCents else -tx.amountCents
+    val delta = if (isIncomeType(tx.typeId)) tx.amountCents else -tx.amountCents
     adjustAccountBalance(tx.accountId, delta)
   }
 
@@ -202,18 +251,21 @@ interface FinanceDao {
     oldTx: FinanceTransactionEntity,
     newTx: FinanceTransactionEntity,
   ) {
-    val reverseOld = if (oldTx.typeId == TransactionTypes.INGRESO) -oldTx.amountCents else oldTx.amountCents
+    val reverseOld = if (isIncomeType(oldTx.typeId)) -oldTx.amountCents else oldTx.amountCents
     adjustAccountBalance(oldTx.accountId, reverseOld)
     updateTransactionRaw(newTx)
-    val applyNew = if (newTx.typeId == TransactionTypes.INGRESO) newTx.amountCents else -newTx.amountCents
+    val applyNew = if (isIncomeType(newTx.typeId)) newTx.amountCents else -newTx.amountCents
     adjustAccountBalance(newTx.accountId, applyNew)
   }
 
   @Transaction
-  suspend fun deleteTransactionAndReverseBalance(tx: FinanceTransactionEntity) {
-    val reverse = if (tx.typeId == TransactionTypes.INGRESO) -tx.amountCents else tx.amountCents
+  suspend fun deleteTransactionAndReverseBalance(
+    tx: FinanceTransactionEntity,
+    deletedAtMillis: Long = System.currentTimeMillis(),
+  ) {
+    val reverse = if (isIncomeType(tx.typeId)) -tx.amountCents else tx.amountCents
     adjustAccountBalance(tx.accountId, reverse)
-    deleteTransactionRaw(tx)
+    softDeleteTransactionRaw(tx.id, deletedAtMillis)
   }
 
   @Transaction

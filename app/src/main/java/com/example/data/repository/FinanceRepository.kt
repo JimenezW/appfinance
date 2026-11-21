@@ -14,8 +14,10 @@ import com.example.data.local.SyncQueueItemEntity
 import com.example.data.local.SyncSettingsEntity
 import com.example.data.local.SyncStatus
 import com.example.data.local.TransactionTypeEntity
+import com.example.data.local.TransactionTypes
 import com.example.data.sync.ApiJsonBuilder
 import com.example.domain.FiscalPeriodCalculator
+import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,8 +36,11 @@ class FinanceRepository(private val dao: FinanceDao) {
 
   suspend fun ensureSeeded() {
     DatabaseSeeder.seedIfEmpty(dao)
-    if (dao.getSyncSettingsOnce() == null) {
-      dao.upsertSyncSettings(SyncSettingsEntity())
+    val existingSettings = dao.getSyncSettingsOnce()
+    if (existingSettings == null) {
+      dao.upsertSyncSettings(SyncSettingsEntity(deviceId = UUID.randomUUID().toString()))
+    } else if (existingSettings.deviceId.isBlank()) {
+      dao.upsertSyncSettings(existingSettings.copy(deviceId = UUID.randomUUID().toString()))
     }
   }
 
@@ -44,7 +49,10 @@ class FinanceRepository(private val dao: FinanceDao) {
   }
 
   suspend fun saveSyncSettings(settings: SyncSettingsEntity) {
-    dao.upsertSyncSettings(settings)
+    val withDeviceId =
+      if (settings.deviceId.isBlank()) settings.copy(deviceId = UUID.randomUUID().toString())
+      else settings
+    dao.upsertSyncSettings(withDeviceId)
   }
 
   // --- Transactions ---
@@ -52,9 +60,12 @@ class FinanceRepository(private val dao: FinanceDao) {
     val now = System.currentTimeMillis()
     val pendingTx =
       tx.copy(
+        id = tx.id.ifBlank { UUID.randomUUID().toString() },
         updatedAtMillis = now,
         syncStatus = SyncStatus.PENDING,
         syncedAtMillis = null,
+        isDefault = false,
+        deletedAtMillis = null,
       )
     dao.insertTransactionAndUpdateBalance(pendingTx)
     dao.insertSyncQueueItem(
@@ -93,7 +104,7 @@ class FinanceRepository(private val dao: FinanceDao) {
 
   suspend fun deleteTransaction(tx: FinanceTransactionEntity) {
     val now = System.currentTimeMillis()
-    dao.deleteTransactionAndReverseBalance(tx)
+    dao.deleteTransactionAndReverseBalance(tx, now)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.TRANSACTION,
@@ -114,9 +125,12 @@ class FinanceRepository(private val dao: FinanceDao) {
     val now = System.currentTimeMillis()
     val pendingTx =
       tx.copy(
+        id = tx.id.ifBlank { UUID.randomUUID().toString() },
         updatedAtMillis = now,
         syncStatus = SyncStatus.PENDING,
         syncedAtMillis = null,
+        isDefault = false,
+        deletedAtMillis = null,
       )
     dao.confirmScheduledRuleAtomic(rule, pendingTx, confirmedPeriodKey)
     val updatedRule =
@@ -136,7 +150,7 @@ class FinanceRepository(private val dao: FinanceDao) {
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.SCHEDULED_RULE,
-        entityId = updatedRule.id.toString(),
+        entityId = updatedRule.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.scheduledRuleToJson(updatedRule).toString(),
         createdAtMillis = now,
@@ -150,157 +164,171 @@ class FinanceRepository(private val dao: FinanceDao) {
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.SCHEDULED_RULE,
-        entityId = updated.id.toString(),
+        entityId = updated.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.scheduledRuleToJson(updated).toString(),
       )
     )
   }
 
-  suspend fun saveScheduledRule(rule: ScheduledRuleEntity) {
-    val savedId =
-      if (rule.id == 0L) dao.insertScheduledRule(rule)
-      else {
-        dao.updateScheduledRule(rule)
-        rule.id
+  suspend fun saveScheduledRule(rule: ScheduledRuleEntity): String {
+    val isNew = rule.id.isBlank()
+    val saved =
+      if (isNew) {
+        rule.copy(id = UUID.randomUUID().toString(), isDefault = false, deletedAtMillis = null)
+      } else {
+        rule.copy(deletedAtMillis = null)
       }
-    val saved = rule.copy(id = savedId)
+    dao.insertScheduledRule(saved)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.SCHEDULED_RULE,
-        entityId = saved.id.toString(),
+        entityId = saved.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.scheduledRuleToJson(saved).toString(),
       )
     )
+    return saved.id
   }
 
   suspend fun deleteScheduledRule(rule: ScheduledRuleEntity) {
-    dao.deleteScheduledRule(rule)
+    val now = System.currentTimeMillis()
+    dao.softDeleteScheduledRule(rule.id, now)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.SCHEDULED_RULE,
-        entityId = rule.id.toString(),
+        entityId = rule.id,
         operation = SyncOperations.DELETE,
         payloadJson = ApiJsonBuilder.scheduledRuleToJson(rule).toString(),
+        createdAtMillis = now,
       )
     )
   }
 
   // --- Classifications CRUD ---
-  suspend fun saveClassification(item: ClassificationEntity): Long {
-    val savedId =
-      if (item.id == 0L) dao.insertClassification(item)
-      else {
-        dao.updateClassification(item)
-        item.id
+  suspend fun saveClassification(item: ClassificationEntity): String {
+    val isNew = item.id.isBlank()
+    val saved =
+      if (isNew) {
+        item.copy(id = UUID.randomUUID().toString(), isDefault = false, deletedAtMillis = null)
+      } else {
+        item.copy(deletedAtMillis = null)
       }
-    val saved = item.copy(id = savedId)
+    dao.insertClassification(saved)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.CLASSIFICATION,
-        entityId = saved.id.toString(),
+        entityId = saved.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.classificationToJson(saved).toString(),
       )
     )
-    return savedId
+    return saved.id
   }
 
   suspend fun deleteClassification(item: ClassificationEntity) {
-    dao.deleteClassification(item)
+    val now = System.currentTimeMillis()
+    dao.softDeleteClassification(item.id, now)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.CLASSIFICATION,
-        entityId = item.id.toString(),
+        entityId = item.id,
         operation = SyncOperations.DELETE,
         payloadJson = ApiJsonBuilder.classificationToJson(item).toString(),
+        createdAtMillis = now,
       )
     )
   }
 
   // --- Details CRUD ---
-  suspend fun saveDetail(item: DetailItemEntity): Long {
-    val savedId =
-      if (item.id == 0L) dao.insertDetail(item)
-      else {
-        dao.updateDetail(item)
-        item.id
+  suspend fun saveDetail(item: DetailItemEntity): String {
+    val isNew = item.id.isBlank()
+    val saved =
+      if (isNew) {
+        item.copy(id = UUID.randomUUID().toString(), isDefault = false, deletedAtMillis = null)
+      } else {
+        item.copy(deletedAtMillis = null)
       }
-    val saved = item.copy(id = savedId)
+    dao.insertDetail(saved)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.DETAIL,
-        entityId = saved.id.toString(),
+        entityId = saved.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.detailToJson(saved).toString(),
       )
     )
-    return savedId
+    return saved.id
   }
 
   suspend fun deleteDetail(item: DetailItemEntity) {
-    dao.deleteDetail(item)
+    val now = System.currentTimeMillis()
+    dao.softDeleteDetail(item.id, now)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.DETAIL,
-        entityId = item.id.toString(),
+        entityId = item.id,
         operation = SyncOperations.DELETE,
         payloadJson = ApiJsonBuilder.detailToJson(item).toString(),
+        createdAtMillis = now,
       )
     )
   }
 
   // --- Accounts CRUD ---
-  suspend fun saveAccount(account: AccountEntity): Long {
-    val savedId =
-      if (account.id == 0L) dao.insertAccount(account)
-      else {
-        dao.updateAccount(account)
-        account.id
+  suspend fun saveAccount(account: AccountEntity): String {
+    val isNew = account.id.isBlank()
+    val saved =
+      if (isNew) {
+        account.copy(id = UUID.randomUUID().toString(), isDefault = false, deletedAtMillis = null)
+      } else {
+        account.copy(deletedAtMillis = null)
       }
-    val saved = account.copy(id = savedId)
+    dao.insertAccount(saved)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.ACCOUNT,
-        entityId = saved.id.toString(),
+        entityId = saved.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.accountToJson(saved).toString(),
       )
     )
-    return savedId
+    return saved.id
   }
 
   suspend fun deleteAccount(account: AccountEntity) {
-    dao.deleteAccount(account)
+    val now = System.currentTimeMillis()
+    dao.softDeleteAccount(account.id, now)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.ACCOUNT,
-        entityId = account.id.toString(),
+        entityId = account.id,
         operation = SyncOperations.DELETE,
         payloadJson = ApiJsonBuilder.accountToJson(account).toString(),
+        createdAtMillis = now,
       )
     )
   }
 
   // --- Merchants CRUD ---
-  suspend fun saveMerchant(merchant: MerchantEntity): Long {
-    val savedId =
-      if (merchant.id == 0L) dao.insertMerchant(merchant)
-      else {
-        dao.updateMerchant(merchant)
-        merchant.id
+  suspend fun saveMerchant(merchant: MerchantEntity): String {
+    val isNew = merchant.id.isBlank()
+    val saved =
+      if (isNew) {
+        merchant.copy(id = UUID.randomUUID().toString(), isDefault = false, deletedAtMillis = null)
+      } else {
+        merchant.copy(deletedAtMillis = null)
       }
-    val saved = merchant.copy(id = savedId)
+    dao.insertMerchant(saved)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.MERCHANT,
-        entityId = saved.id.toString(),
+        entityId = saved.id,
         operation = SyncOperations.UPSERT,
         payloadJson = ApiJsonBuilder.merchantToJson(saved).toString(),
       )
     )
-    return savedId
+    return saved.id
   }
 
   suspend fun ensureMerchantExists(name: String) {
@@ -308,27 +336,36 @@ class FinanceRepository(private val dao: FinanceDao) {
     if (trimmed.isEmpty()) return
     val existing = dao.findMerchantByName(trimmed)
     if (existing == null) {
-      val newMerchant = MerchantEntity(name = trimmed, sortOrder = 999, isActive = true)
-      val savedId = dao.insertMerchant(newMerchant)
+      val newMerchant =
+        MerchantEntity(
+          id = UUID.randomUUID().toString(),
+          name = trimmed,
+          sortOrder = 999,
+          isActive = true,
+          isDefault = false,
+        )
+      dao.insertMerchant(newMerchant)
       dao.insertSyncQueueItem(
         SyncQueueItemEntity(
           entityType = SyncEntityTypes.MERCHANT,
-          entityId = savedId.toString(),
+          entityId = newMerchant.id,
           operation = SyncOperations.UPSERT,
-          payloadJson = ApiJsonBuilder.merchantToJson(newMerchant.copy(id = savedId)).toString(),
+          payloadJson = ApiJsonBuilder.merchantToJson(newMerchant).toString(),
         )
       )
     }
   }
 
   suspend fun deleteMerchant(merchant: MerchantEntity) {
-    dao.deleteMerchant(merchant)
+    val now = System.currentTimeMillis()
+    dao.softDeleteMerchant(merchant.id, now)
     dao.insertSyncQueueItem(
       SyncQueueItemEntity(
         entityType = SyncEntityTypes.MERCHANT,
-        entityId = merchant.id.toString(),
+        entityId = merchant.id,
         operation = SyncOperations.DELETE,
         payloadJson = ApiJsonBuilder.merchantToJson(merchant).toString(),
+        createdAtMillis = now,
       )
     )
   }
@@ -353,9 +390,9 @@ class FinanceRepository(private val dao: FinanceDao) {
 
   fun buildCapturedDataJson(
     transactions: List<FinanceTransactionEntity>,
-    classificationsById: Map<Long, ClassificationEntity>,
-    detailsById: Map<Long, DetailItemEntity>,
-    accountsById: Map<Long, AccountEntity>,
+    classificationsById: Map<String, ClassificationEntity>,
+    detailsById: Map<String, DetailItemEntity>,
+    accountsById: Map<String, AccountEntity>,
   ): String =
     ApiJsonBuilder.buildCapturedDataJson(
       transactions = transactions,
@@ -366,9 +403,9 @@ class FinanceRepository(private val dao: FinanceDao) {
 
   fun buildCsvBackup(
     transactions: List<FinanceTransactionEntity>,
-    classificationsById: Map<Long, ClassificationEntity>,
-    detailsById: Map<Long, DetailItemEntity>,
-    accountsById: Map<Long, AccountEntity>,
+    classificationsById: Map<String, ClassificationEntity>,
+    detailsById: Map<String, DetailItemEntity>,
+    accountsById: Map<String, AccountEntity>,
   ): String {
     val sb = StringBuilder()
     sb.appendLine(
@@ -376,7 +413,7 @@ class FinanceRepository(private val dao: FinanceDao) {
     )
     transactions.forEach { tx ->
       val fecha = FiscalPeriodCalculator.formatShortDate(tx.operationEpochDay)
-      val tipo = if (tx.typeId == "INGRESO") "Ingreso" else "Gasto"
+      val tipo = if (TransactionTypes.isIncome(tx.typeId)) "Ingreso" else "Gasto"
       val clasif = classificationsById[tx.classificationId]?.name ?: ""
       val det = detailsById[tx.detailId]?.name ?: ""
       val cta = accountsById[tx.accountId]?.name ?: ""
@@ -417,13 +454,22 @@ class FinanceRepository(private val dao: FinanceDao) {
     root.put("exportType", "full_backup")
     root.put("exportedAtMillis", System.currentTimeMillis())
     root.put("app", "Mis Finanzas")
-    root.put("accounts", JSONArray().apply { accounts.forEach { put(ApiJsonBuilder.accountToJson(it)) } })
+    root.put(
+      "accounts",
+      JSONArray().apply { accounts.forEach { put(ApiJsonBuilder.accountToJson(it)) } },
+    )
     root.put(
       "classifications",
       JSONArray().apply { classifications.forEach { put(ApiJsonBuilder.classificationToJson(it)) } },
     )
-    root.put("details", JSONArray().apply { details.forEach { put(ApiJsonBuilder.detailToJson(it)) } })
-    root.put("merchants", JSONArray().apply { merchants.forEach { put(ApiJsonBuilder.merchantToJson(it)) } })
+    root.put(
+      "details",
+      JSONArray().apply { details.forEach { put(ApiJsonBuilder.detailToJson(it)) } },
+    )
+    root.put(
+      "merchants",
+      JSONArray().apply { merchants.forEach { put(ApiJsonBuilder.merchantToJson(it)) } },
+    )
     root.put(
       "scheduledRules",
       JSONArray().apply { scheduledRules.forEach { put(ApiJsonBuilder.scheduledRuleToJson(it)) } },

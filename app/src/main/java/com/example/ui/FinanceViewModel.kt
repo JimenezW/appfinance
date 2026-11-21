@@ -56,12 +56,12 @@ enum class AdminSubSection {
 }
 
 data class CaptureFormState(
-  val typeId: String = TransactionTypes.GASTO,
+  val typeId: String = TransactionTypes.GASTO_UUID,
   val amountInput: String = "",
   val operationEpochDay: Long = FiscalPeriodCalculator.todayEpochDay(),
-  val selectedClassificationId: Long? = null,
-  val selectedDetailId: Long? = null,
-  val selectedAccountId: Long? = null,
+  val selectedClassificationId: String? = null,
+  val selectedDetailId: String? = null,
+  val selectedAccountId: String? = null,
   val merchantName: String = "",
   val note: String = "",
   val showNoteField: Boolean = false,
@@ -95,7 +95,7 @@ data class PendingRuleDisplay(
 )
 
 data class CategoryStat(
-  val classificationId: Long,
+  val classificationId: String,
   val classificationName: String,
   val totalCents: Long,
   val percentage: Float,
@@ -122,7 +122,7 @@ data class FinanceUiState(
   val allTransactions: List<FinanceTransactionEntity> = emptyList(),
   val selectedPeriod: FiscalPeriod =
     FiscalPeriodCalculator.computeFiscalPeriod(FiscalPeriodCalculator.todayEpochDay()),
-  val selectedAccountFilterId: Long? = null,
+  val selectedAccountFilterId: String? = null,
   val searchQuery: String = "",
   val statsShowIncome: Boolean = false,
   val wifiState: WifiConnectivityState = WifiConnectivityState(),
@@ -145,9 +145,9 @@ data class FinanceUiState(
       return pendingSyncQueue.size + unqueuedUnsyncedTx
     }
 
-  private val classificationUsageStats: Map<Long, Pair<Int, Long>>
+  private val classificationUsageStats: Map<String, Pair<Int, Long>>
     get() {
-      val map = HashMap<Long, Pair<Int, Long>>()
+      val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val prev = map[tx.classificationId]
         val count = (prev?.first ?: 0) + 1
@@ -157,9 +157,9 @@ data class FinanceUiState(
       return map
     }
 
-  private val detailUsageStats: Map<Long, Pair<Int, Long>>
+  private val detailUsageStats: Map<String, Pair<Int, Long>>
     get() {
-      val map = HashMap<Long, Pair<Int, Long>>()
+      val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val prev = map[tx.detailId]
         val count = (prev?.first ?: 0) + 1
@@ -169,9 +169,9 @@ data class FinanceUiState(
       return map
     }
 
-  private val accountUsageStats: Map<Long, Pair<Int, Long>>
+  private val accountUsageStats: Map<String, Pair<Int, Long>>
     get() {
-      val map = HashMap<Long, Pair<Int, Long>>()
+      val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val prev = map[tx.accountId]
         val count = (prev?.first ?: 0) + 1
@@ -194,11 +194,11 @@ data class FinanceUiState(
       return map
     }
 
-  fun classificationUsageCount(id: Long): Int = classificationUsageStats[id]?.first ?: 0
+  fun classificationUsageCount(id: String): Int = classificationUsageStats[id]?.first ?: 0
 
-  fun detailUsageCount(id: Long): Int = detailUsageStats[id]?.first ?: 0
+  fun detailUsageCount(id: String): Int = detailUsageStats[id]?.first ?: 0
 
-  fun accountUsageCount(id: Long): Int = accountUsageStats[id]?.first ?: 0
+  fun accountUsageCount(id: String): Int = accountUsageStats[id]?.first ?: 0
 
   fun merchantUsageCount(name: String): Int =
     merchantUsageStats[name.trim().lowercase()]?.first ?: 0
@@ -206,18 +206,19 @@ data class FinanceUiState(
   val activeClassificationsForCapture: List<ClassificationEntity>
     get() {
       val stats = classificationUsageStats
+      val targetCode = TransactionTypes.codeFor(capture.typeId)
       return allClassifications
-        .filter { it.isActive && it.typeId == capture.typeId }
+        .filter { it.isActive && TransactionTypes.codeFor(it.typeId) == targetCode }
         .sortedWith(
           compareByDescending<ClassificationEntity> { it.isPinned }
             .thenByDescending { stats[it.id]?.first ?: 0 }
             .thenByDescending { stats[it.id]?.second ?: 0L }
             .thenBy { it.sortOrder }
-            .thenBy { it.id }
+            .thenBy { it.name }
         )
     }
 
-  val effectiveClassificationId: Long?
+  val effectiveClassificationId: String?
     get() {
       val list = activeClassificationsForCapture
       return list.firstOrNull { it.id == capture.selectedClassificationId }?.id
@@ -235,11 +236,11 @@ data class FinanceUiState(
             .thenByDescending { stats[it.id]?.first ?: 0 }
             .thenByDescending { stats[it.id]?.second ?: 0L }
             .thenBy { it.sortOrder }
-            .thenBy { it.id }
+            .thenBy { it.name }
         )
     }
 
-  val effectiveDetailId: Long?
+  val effectiveDetailId: String?
     get() {
       val list = activeDetailsForCapture
       return list.firstOrNull { it.id == capture.selectedDetailId }?.id ?: list.firstOrNull()?.id
@@ -255,11 +256,11 @@ data class FinanceUiState(
             .thenByDescending { stats[it.id]?.first ?: 0 }
             .thenByDescending { stats[it.id]?.second ?: 0L }
             .thenBy { it.sortOrder }
-            .thenBy { it.id }
+            .thenBy { it.name }
         )
     }
 
-  val effectiveAccountId: Long?
+  val effectiveAccountId: String?
     get() {
       val list = activeAccounts
       return list.firstOrNull { it.id == capture.selectedAccountId }?.id ?: list.firstOrNull()?.id
@@ -289,13 +290,13 @@ data class FinanceUiState(
   val totalBalanceCents: Long
     get() = activeAccounts.sumOf { it.balanceCents }
 
-  val classificationsById: Map<Long, ClassificationEntity>
+  val classificationsById: Map<String, ClassificationEntity>
     get() = allClassifications.associateBy { it.id }
 
-  val detailsById: Map<Long, DetailItemEntity>
+  val detailsById: Map<String, DetailItemEntity>
     get() = allDetails.associateBy { it.id }
 
-  val accountsById: Map<Long, AccountEntity>
+  val accountsById: Map<String, AccountEntity>
     get() = allAccounts.associateBy { it.id }
 
   val periodTransactions: List<TransactionDisplay>
@@ -331,29 +332,32 @@ data class FinanceUiState(
   val periodIncomeCents: Long
     get() =
       allTransactions
-        .filter { it.fiscalPeriodKey == selectedPeriod.key && it.typeId == TransactionTypes.INGRESO }
+        .filter { it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.isIncome(it.typeId) }
         .sumOf { it.amountCents }
 
   val periodExpenseCents: Long
     get() =
       allTransactions
-        .filter { it.fiscalPeriodKey == selectedPeriod.key && it.typeId == TransactionTypes.GASTO }
+        .filter { it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.isExpense(it.typeId) }
         .sumOf { it.amountCents }
 
   val expenseBreakdown: List<CategoryStat>
-    get() = buildBreakdown(TransactionTypes.GASTO, periodExpenseCents)
+    get() = buildBreakdown(TransactionTypes.GASTO_UUID, periodExpenseCents)
 
   val incomeBreakdown: List<CategoryStat>
-    get() = buildBreakdown(TransactionTypes.INGRESO, periodIncomeCents)
+    get() = buildBreakdown(TransactionTypes.INGRESO_UUID, periodIncomeCents)
 
   val mayorRubro: CategoryStat?
     get() = expenseBreakdown.firstOrNull()
 
   private fun buildBreakdown(typeId: String, totalForType: Long): List<CategoryStat> {
     val classMap = classificationsById
+    val targetCode = TransactionTypes.codeFor(typeId)
     val grouped =
       allTransactions
-        .filter { it.fiscalPeriodKey == selectedPeriod.key && it.typeId == typeId }
+        .filter {
+          it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.codeFor(it.typeId) == targetCode
+        }
         .groupBy { it.classificationId }
     return grouped
       .map { (classId, txs) ->
@@ -426,7 +430,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     MutableStateFlow(
       FiscalPeriodCalculator.computeFiscalPeriod(FiscalPeriodCalculator.todayEpochDay())
     )
-  private val selectedAccountFilterId = MutableStateFlow<Long?>(null)
+  private val selectedAccountFilterId = MutableStateFlow<String?>(null)
   private val searchQuery = MutableStateFlow("")
   private val statsShowIncome = MutableStateFlow(false)
 
@@ -562,10 +566,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             isWifiConnected = trigger.isWifiConnected,
             pendingCount = trigger.pendingCount,
             apiUrlConfigured = trigger.apiEndpointUrl.isNotBlank(),
+            isDeviceRevoked = uiState.value.syncSettings.isDeviceRevoked,
           )
 
           if (
-            trigger.isWifiConnected &&
+            !uiState.value.syncSettings.isDeviceRevoked &&
+              trigger.isWifiConnected &&
               trigger.autoSyncOnWifi &&
               trigger.pendingCount > 0 &&
               trigger.apiEndpointUrl.isNotBlank()
@@ -606,22 +612,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
   // --- Capture Actions ---
   fun selectType(typeId: String) {
+    val resolvedTypeId = TransactionTypes.uuidForCode(TransactionTypes.codeFor(typeId))
+    val targetCode = TransactionTypes.codeFor(resolvedTypeId)
     captureForm.update { form ->
       val firstClass =
-        uiState.value.allClassifications.firstOrNull { it.isActive && it.typeId == typeId }?.id
+        uiState.value.allClassifications
+          .firstOrNull { it.isActive && TransactionTypes.codeFor(it.typeId) == targetCode }
+          ?.id
       val firstDetail =
         firstClass?.let { cid ->
           uiState.value.allDetails.firstOrNull { it.isActive && it.classificationId == cid }?.id
         }
       form.copy(
-        typeId = typeId,
+        typeId = resolvedTypeId,
         selectedClassificationId = firstClass,
         selectedDetailId = firstDetail,
       )
     }
   }
 
-  fun selectClassification(classificationId: Long) {
+  fun selectClassification(classificationId: String) {
     val firstDetail =
       uiState.value.allDetails
         .firstOrNull { it.isActive && it.classificationId == classificationId }
@@ -631,11 +641,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  fun selectDetail(detailId: Long) {
+  fun selectDetail(detailId: String) {
     captureForm.update { it.copy(selectedDetailId = detailId) }
   }
 
-  fun selectAccount(accountId: Long) {
+  fun selectAccount(accountId: String) {
     captureForm.update { it.copy(selectedAccountId = accountId) }
   }
 
@@ -700,7 +710,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val cls =
       state.allClassifications.firstOrNull {
         it.isActive &&
-          it.typeId == TransactionTypes.INGRESO &&
+          TransactionTypes.isIncome(it.typeId) &&
           it.name.equals(classificationName, ignoreCase = true)
       }
     val det =
@@ -715,7 +725,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       }
     captureForm.update { form ->
       form.copy(
-        typeId = TransactionTypes.INGRESO,
+        typeId = TransactionTypes.INGRESO_UUID,
         amountInput = amountText,
         selectedClassificationId = cls?.id ?: form.selectedClassificationId,
         selectedDetailId = det?.id ?: form.selectedDetailId,
@@ -735,6 +745,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val merchant = state.capture.merchantName.trim().ifEmpty { null }
     val note = state.capture.note.trim().ifEmpty { null }
     val now = System.currentTimeMillis()
+    val resolvedTypeId = TransactionTypes.uuidForCode(TransactionTypes.codeFor(state.capture.typeId))
 
     val tx =
       FinanceTransactionEntity(
@@ -743,7 +754,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         operationEpochDay = state.capture.operationEpochDay,
         fiscalPeriodKey = fiscalPeriod.key,
         fiscalPeriodLabel = fiscalPeriod.label,
-        typeId = state.capture.typeId,
+        typeId = resolvedTypeId,
         classificationId = classId,
         detailId = detailId,
         accountId = accountId,
@@ -760,7 +771,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         repository.ensureMerchantExists(merchant)
       }
       repository.recordTransaction(tx)
-      val prefix = if (tx.typeId == TransactionTypes.GASTO) "Gasto" else "Ingreso"
+      val prefix = if (TransactionTypes.isExpense(tx.typeId)) "Gasto" else "Ingreso"
       val formatted = FiscalPeriodCalculator.formatMxn(amountCents)
       _snackbarMessages.tryEmit("$prefix guardado ($formatted • ${fiscalPeriod.label})")
       captureForm.update {
@@ -774,14 +785,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
   fun confirmPendingRule(pending: PendingRuleDisplay, overrideAmountCents: Long? = null) {
     val amount = overrideAmountCents ?: pending.rule.amountCents
     if (amount <= 0L) return
-    val today = FiscalPeriodCalculator.todayEpochDay()
-    val period = FiscalPeriodCalculator.computeFiscalPeriod(today)
     val now = System.currentTimeMillis()
     val tx =
       FinanceTransactionEntity(
         id = UUID.randomUUID().toString(),
         createdAtMillis = now,
-        operationEpochDay = today,
+        operationEpochDay = pending.targetEpochDay,
         fiscalPeriodKey = pending.targetFiscalPeriod.key,
         fiscalPeriodLabel = pending.targetFiscalPeriod.label,
         typeId = pending.rule.typeId,
@@ -800,7 +809,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       _snackbarMessages.tryEmit(
         "Confirmado: ${pending.rule.title} (${FiscalPeriodCalculator.formatMxn(amount)})"
       )
-      selectedPeriod.value = period
+      selectedPeriod.value = pending.targetFiscalPeriod
     }
   }
 
@@ -871,7 +880,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     selectedPeriod.update { it.next() }
   }
 
-  fun toggleAccountFilter(accountId: Long) {
+  fun toggleAccountFilter(accountId: String) {
     selectedAccountFilterId.update { cur -> if (cur == accountId) null else accountId }
   }
 
@@ -965,10 +974,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val trimmed = name.trim()
     if (trimmed.isEmpty()) return
     val state = uiState.value
-    val typeId = state.capture.typeId
+    val typeId = TransactionTypes.uuidForCode(TransactionTypes.codeFor(state.capture.typeId))
+    val targetCode = TransactionTypes.codeFor(typeId)
     val existing =
       state.allClassifications.firstOrNull {
-        it.typeId == typeId && it.name.equals(trimmed, ignoreCase = true)
+        TransactionTypes.codeFor(it.typeId) == targetCode && it.name.equals(trimmed, ignoreCase = true)
       }
     viewModelScope.launch {
       if (existing != null) {
@@ -982,20 +992,24 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       val newClassId =
         repository.saveClassification(
           ClassificationEntity(
+            id = "",
             typeId = typeId,
             name = trimmed,
             sortOrder = nextOrder,
             isActive = true,
             isPinned = true,
+            isDefault = false,
           )
         )
       val newDetailId =
         repository.saveDetail(
           DetailItemEntity(
+            id = "",
             classificationId = newClassId,
             name = "General",
             sortOrder = 1,
             isActive = true,
+            isDefault = false,
           )
         )
       captureForm.update {
@@ -1027,11 +1041,13 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       val newDetailId =
         repository.saveDetail(
           DetailItemEntity(
+            id = "",
             classificationId = classId,
             name = trimmed,
             sortOrder = nextOrder,
             isActive = true,
             isPinned = true,
+            isDefault = false,
           )
         )
       captureForm.update { it.copy(selectedDetailId = newDetailId) }
@@ -1039,7 +1055,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  fun togglePinClassification(classificationId: Long) {
+  fun togglePinClassification(classificationId: String) {
     val item = uiState.value.allClassifications.firstOrNull { it.id == classificationId } ?: return
     viewModelScope.launch {
       val updated = item.copy(isPinned = !item.isPinned)
@@ -1051,7 +1067,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  fun togglePinDetail(detailId: Long) {
+  fun togglePinDetail(detailId: String) {
     val item = uiState.value.allDetails.firstOrNull { it.id == detailId } ?: return
     viewModelScope.launch {
       val updated = item.copy(isPinned = !item.isPinned)
@@ -1063,7 +1079,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  fun togglePinAccount(accountId: Long) {
+  fun togglePinAccount(accountId: String) {
     val item = uiState.value.allAccounts.firstOrNull { it.id == accountId } ?: return
     viewModelScope.launch {
       val updated = item.copy(isPinned = !item.isPinned)
@@ -1075,7 +1091,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
-  fun togglePinMerchant(merchantId: Long) {
+  fun togglePinMerchant(merchantId: String) {
     val item = uiState.value.allMerchants.firstOrNull { it.id == merchantId } ?: return
     viewModelScope.launch {
       val updated = item.copy(isPinned = !item.isPinned)
@@ -1100,6 +1116,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         current.copy(
           apiEndpointUrl = endpointUrl.trim(),
           apiAuthToken = authToken.trim(),
+          enrollmentToken = authToken.trim(),
           autoSyncOnWifi = autoSyncOnWifi,
           deviceLabel = deviceLabel.trim().ifEmpty { "Android" },
         )
@@ -1112,7 +1129,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     connectivityMonitor.refreshNow()
     viewModelScope.launch {
       val wifiConnected = connectivityMonitor.connectivityState.value.isWifiConnected
-      val status = syncManager.syncPendingIfReady(isWifiConnected = wifiConnected)
+      val status =
+        syncManager.syncPendingIfReady(
+          isWifiConnected = wifiConnected,
+          pullAfterPush = true,
+        )
       _snackbarMessages.tryEmit(status.message)
     }
   }
@@ -1198,7 +1219,7 @@ private data class UiControlSnapshot(
   val adminSub: AdminSubSection,
   val capture: CaptureFormState,
   val period: FiscalPeriod,
-  val accountFilterId: Long?,
+  val accountFilterId: String?,
   val searchQuery: String,
   val statsShowIncome: Boolean,
 )

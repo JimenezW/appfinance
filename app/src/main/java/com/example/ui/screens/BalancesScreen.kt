@@ -84,7 +84,7 @@ fun BalancesScreen(
   state: FinanceUiState,
   onPrevPeriod: () -> Unit,
   onNextPeriod: () -> Unit,
-  onToggleAccountFilter: (Long) -> Unit,
+  onToggleAccountFilter: (String) -> Unit,
   onSearchQueryChange: (String) -> Unit,
   onToggleStatsIncome: (Boolean) -> Unit,
   onUpdateTransaction: (FinanceTransactionEntity, FinanceTransactionEntity) -> Unit,
@@ -627,7 +627,7 @@ private fun TransactionRowCard(
   onClick: () -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isExpense = item.entity.typeId == TransactionTypes.GASTO
+  val isExpense = TransactionTypes.isExpense(item.entity.typeId)
   val amountColor = if (isExpense) financeColors.expenseAccent else financeColors.incomeAccent
   val subtitleParts = buildList {
     if (!item.entity.merchantName.isNullOrBlank()) add(item.entity.merchantName)
