@@ -4,17 +4,39 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 object TransactionTypes {
   const val GASTO = "GASTO"
   const val INGRESO = "INGRESO"
+
+  // Official backend UUIDv5 identifiers from backFinanceApp (/api/v1/catalogs/admin-config)
+  const val GASTO_UUID = "6d404c5b-6d59-5589-a36a-d39fc85137aa"
+  const val INGRESO_UUID = "e1135a90-1a21-5d64-84ce-700efa2c8d19"
+
+  fun isIncome(typeIdOrCode: String): Boolean =
+    typeIdOrCode == INGRESO_UUID || typeIdOrCode.equals(INGRESO, ignoreCase = true)
+
+  fun isExpense(typeIdOrCode: String): Boolean =
+    typeIdOrCode == GASTO_UUID || typeIdOrCode.equals(GASTO, ignoreCase = true)
+
+  fun codeFor(typeIdOrCode: String): String =
+    if (isIncome(typeIdOrCode)) INGRESO else GASTO
+
+  fun uuidForCode(code: String): String =
+    if (code.equals(INGRESO, ignoreCase = true)) INGRESO_UUID else GASTO_UUID
 }
 
-@Entity(tableName = "transaction_types")
+@Entity(
+  tableName = "transaction_types",
+  indices = [Index(value = ["code"], unique = true)],
+)
 data class TransactionTypeEntity(
   @PrimaryKey val id: String,
-  val name: String,
+  val code: String, // "GASTO" | "INGRESO"
+  val name: String, // "Gasto" | "Ingreso"
   val sortOrder: Int,
+  val isDefault: Boolean = true,
 )
 
 @Entity(
@@ -28,16 +50,18 @@ data class TransactionTypeEntity(
         onDelete = ForeignKey.RESTRICT,
       )
     ],
-  indices = [Index("typeId")],
+  indices = [Index("typeId"), Index("deletedAtMillis")],
 )
 data class ClassificationEntity(
-  @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  @PrimaryKey val id: String = UUID.randomUUID().toString(),
   val typeId: String,
   val name: String,
   val sortOrder: Int,
   val isActive: Boolean = true,
   val monthlyBudgetCents: Long? = null,
   val isPinned: Boolean = false,
+  val isDefault: Boolean = false,
+  val deletedAtMillis: Long? = null,
 )
 
 @Entity(
@@ -51,46 +75,62 @@ data class ClassificationEntity(
         onDelete = ForeignKey.CASCADE,
       )
     ],
-  indices = [Index("classificationId")],
+  indices = [Index("classificationId"), Index("deletedAtMillis")],
 )
 data class DetailItemEntity(
-  @PrimaryKey(autoGenerate = true) val id: Long = 0,
-  val classificationId: Long,
+  @PrimaryKey val id: String = UUID.randomUUID().toString(),
+  val classificationId: String,
   val name: String,
   val sortOrder: Int,
   val isActive: Boolean = true,
   val isPinned: Boolean = false,
+  val isDefault: Boolean = false,
+  val deletedAtMillis: Long? = null,
 )
 
-@Entity(tableName = "accounts")
+@Entity(
+  tableName = "accounts",
+  indices = [Index("deletedAtMillis")],
+)
 data class AccountEntity(
-  @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  @PrimaryKey val id: String = UUID.randomUUID().toString(),
   val name: String,
   val shortLabel: String,
   val balanceCents: Long = 0L,
+  val currency: String = "MXN",
   val accountKind: String = "DEBIT", // DEBIT, CASH, VALES, CREDIT, FINTECH
   val sortOrder: Int = 0,
   val isActive: Boolean = true,
   val isPinned: Boolean = false,
+  val isDefault: Boolean = false,
+  val deletedAtMillis: Long? = null,
 )
 
-@Entity(tableName = "merchants")
+@Entity(
+  tableName = "merchants",
+  indices = [Index("deletedAtMillis")],
+)
 data class MerchantEntity(
-  @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  @PrimaryKey val id: String = UUID.randomUUID().toString(),
   val name: String,
   val sortOrder: Int = 0,
   val isActive: Boolean = true,
   val isPinned: Boolean = false,
+  val isDefault: Boolean = false,
+  val deletedAtMillis: Long? = null,
 )
 
-@Entity(tableName = "scheduled_rules")
+@Entity(
+  tableName = "scheduled_rules",
+  indices = [Index("deletedAtMillis")],
+)
 data class ScheduledRuleEntity(
-  @PrimaryKey(autoGenerate = true) val id: Long = 0,
+  @PrimaryKey val id: String = UUID.randomUUID().toString(),
   val title: String,
   val typeId: String,
-  val classificationId: Long,
-  val detailId: Long,
-  val accountId: Long,
+  val classificationId: String,
+  val detailId: String,
+  val accountId: String,
   val merchantName: String? = null,
   val amountCents: Long,
   val dayOfMonth: Int, // 1..28, or 31 when isEndOfMonth = true
@@ -98,6 +138,8 @@ data class ScheduledRuleEntity(
   val isActive: Boolean = true,
   val lastConfirmedPeriodKey: String? = null,
   val snoozedUntilEpochDay: Long? = null,
+  val isDefault: Boolean = false,
+  val deletedAtMillis: Long? = null,
 )
 
 object SyncStatus {
@@ -122,24 +164,32 @@ object SyncOperations {
 
 @Entity(
   tableName = "finance_transactions",
-  indices = [Index("fiscalPeriodKey"), Index("operationEpochDay"), Index("accountId")],
+  indices =
+    [
+      Index("fiscalPeriodKey"),
+      Index("operationEpochDay"),
+      Index("accountId"),
+      Index("deletedAtMillis"),
+    ],
 )
 data class FinanceTransactionEntity(
-  @PrimaryKey val id: String,
+  @PrimaryKey val id: String = UUID.randomUUID().toString(),
   val createdAtMillis: Long,
   val operationEpochDay: Long,
   val fiscalPeriodKey: String,
   val fiscalPeriodLabel: String,
   val typeId: String,
-  val classificationId: Long,
-  val detailId: Long,
-  val accountId: Long,
+  val classificationId: String,
+  val detailId: String,
+  val accountId: String,
   val merchantName: String? = null,
   val amountCents: Long,
   val note: String? = null,
   val updatedAtMillis: Long = createdAtMillis,
   val syncStatus: String = SyncStatus.PENDING,
   val syncedAtMillis: Long? = null,
+  val isDefault: Boolean = false,
+  val deletedAtMillis: Long? = null,
 )
 
 @Entity(
@@ -163,11 +213,16 @@ data class SyncQueueItemEntity(
 @Entity(tableName = "sync_settings")
 data class SyncSettingsEntity(
   @PrimaryKey val id: Int = 1,
+  val deviceId: String = "",
   val apiEndpointUrl: String = "",
   val apiAuthToken: String = "",
+  val enrollmentToken: String = "",
+  val isDeviceEnrolled: Boolean = false,
+  val isDeviceRevoked: Boolean = false,
   val autoSyncOnWifi: Boolean = true,
   val deviceLabel: String = "Android",
   val lastSuccessfulSyncMillis: Long? = null,
   val lastAttemptMillis: Long? = null,
+  val lastSyncServerMillis: Long = 0L,
   val lastSyncMessage: String? = null,
 )

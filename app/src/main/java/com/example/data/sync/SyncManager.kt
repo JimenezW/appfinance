@@ -49,6 +49,7 @@ class SyncManager(
       classificationsById = classifications,
       detailsById = details,
       accountsById = accounts,
+      deviceId = settings.deviceId,
     )
   }
 

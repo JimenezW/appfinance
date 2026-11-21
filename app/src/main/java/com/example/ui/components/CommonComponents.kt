@@ -315,7 +315,7 @@ fun PendingRuleTopBanner(
   modifier: Modifier = Modifier,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isIncome = pending.rule.typeId == TransactionTypes.INGRESO
+  val isIncome = TransactionTypes.isIncome(pending.rule.typeId)
   val bgColor by
     animateColorAsState(
       targetValue = if (isIncome) financeColors.incomeContainer else financeColors.pendingContainer,

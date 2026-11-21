@@ -16,6 +16,7 @@ import com.example.data.sync.SyncManager
 import com.example.data.sync.SyncPhase
 import com.example.data.sync.SyncTransport
 import com.example.data.sync.SyncTransportResult
+import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
@@ -62,28 +63,45 @@ class SyncAndExportTest {
     val merchants = repository.merchants.first()
     val rules = repository.scheduledRules.first()
 
-    val cls = classifications.first { it.typeId == TransactionTypes.GASTO }
+    // Seeded entities must carry official UUIDv5 IDs and isDefault = true
+    assertEquals(2, types.size)
+    assertTrue(types.any { it.id == TransactionTypes.GASTO_UUID && it.code == "GASTO" && it.isDefault })
+    assertTrue(types.any { it.id == TransactionTypes.INGRESO_UUID && it.code == "INGRESO" && it.isDefault })
+    assertTrue(classifications.all { it.isDefault })
+
+    // ensureSeeded must initialize a valid UUIDv4 deviceId
+    val settings = db.financeDao().getSyncSettingsOnce()
+    assertNotNull(settings)
+    assertNotNull(UUID.fromString(settings!!.deviceId))
+
+    val cls = classifications.first { TransactionTypes.isExpense(it.typeId) }
     val det = details.first { it.classificationId == cls.id }
     val acc = accounts.first()
 
-    // User adds a new classification offline
-    repository.saveClassification(
-      ClassificationEntity(
-        typeId = TransactionTypes.GASTO,
-        name = "Mascotas",
-        sortOrder = 99,
+    // User adds a new classification offline (generates UUIDv4 and default = false)
+    val newClassId =
+      repository.saveClassification(
+        ClassificationEntity(
+          id = "",
+          typeId = TransactionTypes.GASTO_UUID,
+          name = "Mascotas",
+          sortOrder = 99,
+        )
       )
-    )
+    assertNotNull(UUID.fromString(newClassId))
+    val createdClass = repository.classifications.first().first { it.id == newClassId }
+    assertFalse(createdClass.isDefault)
 
     // User records a transaction offline
+    val txId = UUID.randomUUID().toString()
     val tx =
       FinanceTransactionEntity(
-        id = "tx-offline-1",
+        id = txId,
         createdAtMillis = 1_700_000_000_000L,
         operationEpochDay = 20_770L,
         fiscalPeriodKey = "2026-11",
         fiscalPeriodLabel = "nov 2026",
-        typeId = TransactionTypes.GASTO,
+        typeId = TransactionTypes.GASTO_UUID,
         classificationId = cls.id,
         detailId = det.id,
         accountId = acc.id,
@@ -93,12 +111,16 @@ class SyncAndExportTest {
       )
     repository.recordTransaction(tx)
 
+    // Verify account balance was atomically debited
+    val updatedAcc = repository.accounts.first().first { it.id == acc.id }
+    assertEquals(-32550L, updatedAcc.balanceCents)
+
     val pendingQueue = repository.pendingSyncQueue.first()
     assertEquals(2, pendingQueue.size)
-    assertTrue(pendingQueue.any { it.entityType == SyncEntityTypes.CLASSIFICATION })
-    assertTrue(pendingQueue.any { it.entityType == SyncEntityTypes.TRANSACTION && it.entityId == "tx-offline-1" })
+    assertTrue(pendingQueue.any { it.entityType == SyncEntityTypes.CLASSIFICATION && it.entityId == newClassId })
+    assertTrue(pendingQueue.any { it.entityType == SyncEntityTypes.TRANSACTION && it.entityId == txId })
 
-    // Verify Admin JSON export
+    // Verify Admin JSON export includes TransactionType.code and default flag
     val adminJsonStr =
       repository.buildAdminConfigJson(
         types = types,
@@ -113,6 +135,10 @@ class SyncAndExportTest {
     assertEquals("admin_configuration", adminJson.getString("exportType"))
     assertFalse(adminJson.has("transactions"))
     val dataObj = adminJson.getJSONObject("data")
+    val typesArr = dataObj.getJSONArray("transactionTypes")
+    assertEquals(2, typesArr.length())
+    assertTrue(typesArr.getJSONObject(0).has("code"))
+    assertTrue(typesArr.getJSONObject(0).getBoolean("default"))
     assertTrue(dataObj.getJSONArray("classifications").length() >= 1)
     assertTrue(dataObj.getJSONArray("accounts").length() >= 1)
 
@@ -131,25 +157,33 @@ class SyncAndExportTest {
     val txArray = capturedJson.getJSONArray("transactions")
     assertEquals(1, txArray.length())
     val txJson = txArray.getJSONObject(0)
-    assertEquals("tx-offline-1", txJson.getString("id"))
+    assertEquals(txId, txJson.getString("id"))
     assertEquals(325.5, txJson.getDouble("amountMxn"), 0.001)
     assertEquals(SyncStatus.PENDING, txJson.getString("syncStatus"))
+    assertFalse(txJson.getBoolean("default"))
+
+    // Soft-deleting transaction must hide it from observations and reverse account balance
+    repository.deleteTransaction(repository.transactions.first().first { it.id == txId })
+    assertEquals(0, repository.transactions.first().size)
+    val restoredAcc = repository.accounts.first().first { it.id == acc.id }
+    assertEquals(0L, restoredAcc.balanceCents)
   }
 
   @Test
   fun syncManager_respectsWifiAndApiConfig_andMarksSyncedOnHttp200() = runTest {
-    val cls = repository.classifications.first().first()
+    val cls = repository.classifications.first().first { TransactionTypes.isExpense(it.typeId) }
     val det = repository.details.first().first { it.classificationId == cls.id }
     val acc = repository.accounts.first().first()
+    val txId = UUID.randomUUID().toString()
 
     repository.recordTransaction(
       FinanceTransactionEntity(
-        id = "tx-sync-1",
+        id = txId,
         createdAtMillis = 1_700_000_000_000L,
         operationEpochDay = 20_770L,
         fiscalPeriodKey = "2026-11",
         fiscalPeriodLabel = "nov 2026",
-        typeId = TransactionTypes.GASTO,
+        typeId = TransactionTypes.GASTO_UUID,
         classificationId = cls.id,
         detailId = det.id,
         accountId = acc.id,
@@ -168,7 +202,7 @@ class SyncAndExportTest {
         ): SyncTransportResult {
           lastPostedJson = jsonPayload
           return if (shouldSucceed) {
-            SyncTransportResult.Success(httpCode = 200, responseBody = """{"ok":true}""")
+            SyncTransportResult.Success(httpCode = 200, responseBody = """{"success":true}""")
           } else {
             SyncTransportResult.Failure(httpCode = 503, message = "HTTP 503: Servicio no disponible")
           }
@@ -188,7 +222,7 @@ class SyncAndExportTest {
     // 3. Configure API URL, transport returns 503 -> error recorded, stays pending/failed
     repository.saveSyncSettings(
       SyncSettingsEntity(
-        apiEndpointUrl = "https://api.ejemplo.com/v1/finanzas/sync",
+        apiEndpointUrl = "https://api.ejemplo.com/api/v1/sync/batch",
         autoSyncOnWifi = true,
       )
     )
@@ -205,6 +239,7 @@ class SyncAndExportTest {
     assertNotNull(lastPostedJson)
     val sentBatch = JSONObject(lastPostedJson!!)
     assertEquals("wifi_sync_batch", sentBatch.getString("exportType"))
+    assertTrue(sentBatch.getString("deviceId").isNotBlank())
     assertEquals(1, sentBatch.getJSONArray("capturedTransactions").length())
 
     assertEquals(0, db.financeDao().getPendingSyncQueueOnce().size)

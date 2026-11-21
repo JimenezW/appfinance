@@ -49,6 +49,7 @@ object ApiJsonBuilder {
         "monthlyBudgetMxn",
         item.monthlyBudgetCents?.let { it / 100.0 } ?: JSONObject.NULL,
       )
+      put("default", item.isDefault)
     }
 
   fun detailToJson(
@@ -63,6 +64,7 @@ object ApiJsonBuilder {
       put("sortOrder", item.sortOrder)
       put("isActive", item.isActive)
       put("isPinned", item.isPinned)
+      put("default", item.isDefault)
     }
 
   fun accountToJson(account: AccountEntity): JSONObject =
@@ -71,11 +73,13 @@ object ApiJsonBuilder {
       put("name", account.name)
       put("shortLabel", account.shortLabel)
       put("accountKind", account.accountKind)
+      put("currency", account.currency)
       put("balanceCents", account.balanceCents)
       put("balanceMxn", account.balanceCents / 100.0)
       put("sortOrder", account.sortOrder)
       put("isActive", account.isActive)
       put("isPinned", account.isPinned)
+      put("default", account.isDefault)
     }
 
   fun merchantToJson(merchant: MerchantEntity): JSONObject =
@@ -85,6 +89,7 @@ object ApiJsonBuilder {
       put("sortOrder", merchant.sortOrder)
       put("isActive", merchant.isActive)
       put("isPinned", merchant.isPinned)
+      put("default", merchant.isDefault)
     }
 
   fun scheduledRuleToJson(rule: ScheduledRuleEntity): JSONObject =
@@ -103,6 +108,7 @@ object ApiJsonBuilder {
       put("isActive", rule.isActive)
       put("lastConfirmedPeriodKey", rule.lastConfirmedPeriodKey ?: JSONObject.NULL)
       put("snoozedUntilEpochDay", rule.snoozedUntilEpochDay ?: JSONObject.NULL)
+      put("default", rule.isDefault)
     }
 
   fun transactionToJson(
@@ -134,11 +140,12 @@ object ApiJsonBuilder {
       put("note", tx.note ?: JSONObject.NULL)
       put("syncStatus", tx.syncStatus)
       put("syncedAtMillis", tx.syncedAtMillis ?: JSONObject.NULL)
+      put("default", tx.isDefault)
     }
 
   /**
    * Manual JSON export for user-configured administration data (catalogs, accounts, merchants, rules).
-   * Designed as the contract foundation for building future backend REST APIs.
+   * Aligned with backFinanceApp v0.4.0 contract (UUIDs, TransactionType.code, default flag).
    */
   fun buildAdminConfigJson(
     types: List<TransactionTypeEntity>,
@@ -177,8 +184,10 @@ object ApiJsonBuilder {
               put(
                 JSONObject().apply {
                   put("id", t.id)
+                  put("code", t.code)
                   put("name", t.name)
                   put("sortOrder", t.sortOrder)
+                  put("default", t.isDefault)
                 }
               )
             }
@@ -209,19 +218,18 @@ object ApiJsonBuilder {
 
   /**
    * Manual JSON export for user-captured financial movements (transactions).
-   * Designed as the contract foundation for building future backend REST APIs.
    */
   fun buildCapturedDataJson(
     transactions: List<FinanceTransactionEntity>,
-    classificationsById: Map<Long, ClassificationEntity>,
-    detailsById: Map<Long, DetailItemEntity>,
-    accountsById: Map<Long, AccountEntity>,
+    classificationsById: Map<String, ClassificationEntity>,
+    detailsById: Map<String, DetailItemEntity>,
+    accountsById: Map<String, AccountEntity>,
     nowMillis: Long = System.currentTimeMillis(),
   ): String {
     val totalExpenseCents =
-      transactions.filter { it.typeId == TransactionTypes.GASTO }.sumOf { it.amountCents }
+      transactions.filter { TransactionTypes.isExpense(it.typeId) }.sumOf { it.amountCents }
     val totalIncomeCents =
-      transactions.filter { it.typeId == TransactionTypes.INGRESO }.sumOf { it.amountCents }
+      transactions.filter { TransactionTypes.isIncome(it.typeId) }.sumOf { it.amountCents }
     val pendingCount = transactions.count { it.syncStatus != SyncStatus.SYNCED }
     val syncedCount = transactions.count { it.syncStatus == SyncStatus.SYNCED }
 
@@ -263,15 +271,16 @@ object ApiJsonBuilder {
   }
 
   /**
-   * Builds the Wi-Fi automatic sync JSON batch payload sent via HTTP POST to the REST API.
+   * Builds the Wi-Fi automatic sync JSON batch payload sent via HTTP POST to /api/v1/sync/batch.
    */
   fun buildWifiSyncBatchJson(
     deviceLabel: String,
     pendingQueueItems: List<SyncQueueItemEntity>,
     unsyncedTransactions: List<FinanceTransactionEntity>,
-    classificationsById: Map<Long, ClassificationEntity>,
-    detailsById: Map<Long, DetailItemEntity>,
-    accountsById: Map<Long, AccountEntity>,
+    classificationsById: Map<String, ClassificationEntity>,
+    detailsById: Map<String, DetailItemEntity>,
+    accountsById: Map<String, AccountEntity>,
+    deviceId: String = "",
     nowMillis: Long = System.currentTimeMillis(),
   ): SyncBatchPayload {
     val txUpsertsArray = JSONArray()
@@ -318,7 +327,6 @@ object ApiJsonBuilder {
             }
           )
         } else {
-          // If an upsert tx isn't in unsyncedTransactions (e.g. edge case), include queue snapshot
           if (item.entityId !in includedTxIds) {
             includedTxIds.add(item.entityId)
             val parsed = runCatching { JSONObject(item.payloadJson) }.getOrNull()
@@ -344,6 +352,7 @@ object ApiJsonBuilder {
       put("schemaVersion", SCHEMA_VERSION)
       put("exportType", "wifi_sync_batch")
       put("app", "Mis Finanzas")
+      if (deviceId.isNotBlank()) put("deviceId", deviceId)
       put("deviceLabel", deviceLabel)
       put("sentAtIso", formatIsoUtc(nowMillis))
       put("sentAtMillis", nowMillis)
