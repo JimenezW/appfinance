@@ -1138,6 +1138,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     }
   }
 
+  fun triggerFullHistorySync() {
+    connectivityMonitor.refreshNow()
+    viewModelScope.launch {
+      val wifiConnected = connectivityMonitor.connectivityState.value.isWifiConnected
+      val status =
+        syncManager.pullRemoteChanges(
+          isWifiConnected = wifiConnected,
+          forceAttemptWhenNotWifi = true,
+          sinceMillisOverride = 0L,
+        )
+      _snackbarMessages.tryEmit(status.message)
+    }
+  }
+
   fun loadSyncBatchPreviewJson(onLoaded: (String) -> Unit) {
     viewModelScope.launch {
       val payload = syncManager.previewPendingBatchPayload()

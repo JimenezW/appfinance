@@ -78,6 +78,7 @@ fun SyncAndExportView(
   onBack: () -> Unit,
   onSaveSyncConfig: (endpointUrl: String, authToken: String, autoSyncOnWifi: Boolean, deviceLabel: String) -> Unit,
   onTriggerManualSync: () -> Unit,
+  onTriggerFullHistorySync: () -> Unit = {},
   onLoadSyncBatchPreview: ((String) -> Unit) -> Unit,
   onGenerateAdminConfigJson: () -> String,
   onGenerateCapturedDataJson: () -> String,
@@ -88,6 +89,8 @@ fun SyncAndExportView(
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
+  @Suppress("DEPRECATION")
+  val clipboardManager = LocalClipboardManager.current
   val financeColors = LocalFinanceColors.current
 
   var apiUrlInput by remember(state.syncSettings.apiEndpointUrl) {
@@ -331,6 +334,17 @@ fun SyncAndExportView(
                 Text("Ver Payload")
               }
             }
+
+            OutlinedButton(
+              onClick = onTriggerFullHistorySync,
+              enabled = !isSyncing,
+              modifier = Modifier.fillMaxWidth().height(44.dp).testTag("full_history_sync_btn"),
+              shape = RoundedCornerShape(12.dp),
+            ) {
+              Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(modifier = Modifier.width(6.dp))
+              Text("Descargar histórico completo (desde 0)")
+            }
           }
         }
       }
@@ -374,14 +388,49 @@ fun SyncAndExportView(
                   state.syncSettings.isDeviceEnrolled -> "Enrolado (ECDSA P-256)"
                   else -> "Pendiente 1er contacto (TOFU)"
                 }
-              Text(
-                text = "Device ID: ${state.syncSettings.deviceId.take(8)}… • $enrollLabel",
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = MonoFontFamily,
-                color =
-                  if (state.syncSettings.isDeviceRevoked) financeColors.expenseAccent
-                  else MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+              Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = financeColors.subtleSurface,
+                border = BorderStroke(1.dp, financeColors.cardBorder),
+                modifier = Modifier.fillMaxWidth(),
+              ) {
+                Row(
+                  modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                      text = "Device ID • $enrollLabel",
+                      style = MaterialTheme.typography.labelSmall,
+                      fontWeight = FontWeight.Bold,
+                      color =
+                        if (state.syncSettings.isDeviceRevoked) financeColors.expenseAccent
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                      text = state.syncSettings.deviceId,
+                      style = MaterialTheme.typography.bodySmall,
+                      fontFamily = MonoFontFamily,
+                      color = MaterialTheme.colorScheme.onSurface,
+                    )
+                  }
+                  IconButton(
+                    onClick = {
+                      clipboardManager.setText(AnnotatedString(state.syncSettings.deviceId))
+                      onNotify("Device ID copiado al portapapeles")
+                    },
+                    modifier = Modifier.testTag("copy_device_id_btn"),
+                  ) {
+                    Icon(
+                      imageVector = Icons.Rounded.ContentCopy,
+                      contentDescription = "Copiar Device ID",
+                      tint = MaterialTheme.colorScheme.primary,
+                      modifier = Modifier.size(20.dp),
+                    )
+                  }
+                }
+              }
             }
             OutlinedTextField(
               value = apiUrlInput,

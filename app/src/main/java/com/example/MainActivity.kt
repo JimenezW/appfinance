@@ -241,6 +241,7 @@ fun MisFinanzasApp(viewModel: FinanceViewModel = viewModel()) {
                       onDeleteMerchant = viewModel::deleteMerchant,
                       onSaveSyncConfig = viewModel::saveSyncConfig,
                       onTriggerManualSync = viewModel::triggerManualWifiSync,
+                      onTriggerFullHistorySync = viewModel::triggerFullHistorySync,
                       onLoadSyncBatchPreview = viewModel::loadSyncBatchPreviewJson,
                       onGenerateAdminConfigJson = viewModel::generateAdminConfigJson,
                       onGenerateCapturedDataJson = viewModel::generateCapturedDataJson,

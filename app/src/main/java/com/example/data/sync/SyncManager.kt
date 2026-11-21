@@ -224,6 +224,7 @@ class SyncManager(
   suspend fun pullRemoteChanges(
     isWifiConnected: Boolean,
     forceAttemptWhenNotWifi: Boolean = false,
+    sinceMillisOverride: Long? = null,
   ): SyncRuntimeStatus =
     mutex.withLock {
       val settings = ensureDeviceSettings()
@@ -245,21 +246,29 @@ class SyncManager(
           message = "Configura la URL del API para descargar cambios",
         ).also { _runtimeStatus.value = it }
       }
-      executePullLocked(settings, lastSentCount = 0)
+      executePullLocked(
+        settings = settings,
+        lastSentCount = 0,
+        sinceMillisOverride = sinceMillisOverride,
+      )
     }
 
   private suspend fun executePullLocked(
     settings: SyncSettingsEntity,
     lastSentCount: Int,
+    sinceMillisOverride: Long? = null,
   ): SyncRuntimeStatus {
     _runtimeStatus.value =
       SyncRuntimeStatus(
         phase = SyncPhase.SYNCING,
-        message = "Descargando cambios desde el servidor...",
+        message =
+          if (sinceMillisOverride == 0L) "Descargando histórico completo desde el servidor..."
+          else "Descargando cambios desde el servidor...",
         lastSentCount = lastSentCount,
       )
 
-    val url = SyncUrlHelper.syncChangesUrl(settings.apiEndpointUrl, settings.lastSyncServerMillis)
+    val effectiveSince = sinceMillisOverride ?: settings.lastSyncServerMillis
+    val url = SyncUrlHelper.syncChangesUrl(settings.apiEndpointUrl, effectiveSince)
     val now = System.currentTimeMillis()
     var result = transport.getJson(endpointUrl = url, authContext = authContextFrom(settings))
     if (result is SyncTransportResult.Failure && result.errorCode == "REPLAY_DETECTED") {
