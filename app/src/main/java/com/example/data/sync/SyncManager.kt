@@ -36,6 +36,7 @@ data class SyncRuntimeStatus(
   val message: String = "Listo para sincronizar",
   val lastSentCount: Int = 0,
   val lastPulledCount: Int = 0,
+  val diagnosticReport: String? = null,
 )
 
 class SyncManager(
@@ -178,33 +179,59 @@ class SyncManager(
           is SyncTransportResult.Success -> {
             rateLimitBackoffMs = 0L
             nextAllowedAttemptMillis = 0L
-            val outcome = applyBatchSuccessResponse(batch, result.responseBody, now)
-            sentCount = outcome.syncedCount
-            val msg =
-              if (outcome.failedCount > 0) {
-                "Sincronizados ${outcome.syncedCount} registros (${outcome.failedCount} fallaron)"
-              } else {
-                "Sincronizados ${outcome.syncedCount} registros (HTTP ${result.httpCode})"
+            try {
+              val outcome = applyBatchSuccessResponse(batch, result.responseBody, now)
+              sentCount = outcome.syncedCount
+              val msg =
+                if (outcome.failedCount > 0) {
+                  "Sincronizados ${outcome.syncedCount} registros (${outcome.failedCount} fallaron)"
+                } else {
+                  "Sincronizados ${outcome.syncedCount} registros (HTTP ${result.httpCode})"
+                }
+              activeSettings =
+                activeSettings.copy(
+                  isDeviceEnrolled = true,
+                  lastSuccessfulSyncMillis = now,
+                  lastAttemptMillis = now,
+                  lastSyncMessage = msg,
+                )
+              dao.upsertSyncSettings(activeSettings)
+              if (!pullAfterPush) {
+                return SyncRuntimeStatus(
+                  phase = if (outcome.failedCount > 0) SyncPhase.ERROR else SyncPhase.SYNCED,
+                  message = msg,
+                  lastSentCount = sentCount,
+                ).also { _runtimeStatus.value = it }
               }
-            activeSettings =
-              activeSettings.copy(
-                isDeviceEnrolled = true,
-                lastSuccessfulSyncMillis = now,
-                lastAttemptMillis = now,
-                lastSyncMessage = msg,
+            } catch (e: Exception) {
+              val errSummary = "Error al registrar lote sincronizado (${e.javaClass.simpleName}): ${e.message ?: "desconocido"}"
+              val diag =
+                buildDiagnosticReport(
+                  operation = "POST $batchUrl",
+                  deviceId = activeSettings.deviceId,
+                  httpCode = result.httpCode,
+                  errorCode = e.javaClass.simpleName,
+                  errorMessage = e.message ?: "Error al actualizar SQLite tras POST",
+                  stackTrace = e.stackTraceToString().take(1800),
+                  responseSnippet = result.responseBody.take(800),
+                )
+              dao.upsertSyncSettings(
+                activeSettings.copy(
+                  lastAttemptMillis = now,
+                  lastSyncMessage = "$errSummary\n---\n$diag",
+                )
               )
-            dao.upsertSyncSettings(activeSettings)
-            if (!pullAfterPush) {
               return SyncRuntimeStatus(
-                phase = if (outcome.failedCount > 0) SyncPhase.ERROR else SyncPhase.SYNCED,
-                message = msg,
-                lastSentCount = sentCount,
+                phase = SyncPhase.ERROR,
+                message = errSummary,
+                lastSentCount = 0,
+                diagnosticReport = diag,
               ).also { _runtimeStatus.value = it }
             }
           }
 
           is SyncTransportResult.Failure -> {
-            return handleSyncFailure(activeSettings, batch, result, now)
+            return handleSyncFailure(activeSettings, batch, result, now, endpointUrl = batchUrl)
           }
         }
       }
@@ -279,32 +306,58 @@ class SyncManager(
       is SyncTransportResult.Success -> {
         rateLimitBackoffMs = 0L
         nextAllowedAttemptMillis = 0L
-        val pullResult = applyPullChangesResponse(result.responseBody, now)
-        val msg =
-          if (lastSentCount > 0) {
-            "Enviados $lastSentCount • Descargados ${pullResult.appliedCount} cambios"
-          } else {
-            "Descargados ${pullResult.appliedCount} cambios del servidor"
-          }
-        dao.upsertSyncSettings(
-          settings.copy(
-            isDeviceEnrolled = true,
-            lastSuccessfulSyncMillis = now,
-            lastAttemptMillis = now,
-            lastSyncServerMillis = pullResult.serverTimestampMillis ?: settings.lastSyncServerMillis,
-            lastSyncMessage = msg,
+        try {
+          val pullResult = applyPullChangesResponse(result.responseBody, now)
+          val msg =
+            if (lastSentCount > 0) {
+              "Enviados $lastSentCount • Descargados ${pullResult.appliedCount} cambios"
+            } else {
+              "Descargados ${pullResult.appliedCount} cambios del servidor"
+            }
+          dao.upsertSyncSettings(
+            settings.copy(
+              isDeviceEnrolled = true,
+              lastSuccessfulSyncMillis = now,
+              lastAttemptMillis = now,
+              lastSyncServerMillis = pullResult.serverTimestampMillis ?: settings.lastSyncServerMillis,
+              lastSyncMessage = msg,
+            )
           )
-        )
-        SyncRuntimeStatus(
-          phase = SyncPhase.SYNCED,
-          message = msg,
-          lastSentCount = lastSentCount,
-          lastPulledCount = pullResult.appliedCount,
-        ).also { _runtimeStatus.value = it }
+          SyncRuntimeStatus(
+            phase = SyncPhase.SYNCED,
+            message = msg,
+            lastSentCount = lastSentCount,
+            lastPulledCount = pullResult.appliedCount,
+            diagnosticReport = null,
+          ).also { _runtimeStatus.value = it }
+        } catch (e: Exception) {
+          val errSummary = "Error al aplicar cambios locales (${e.javaClass.simpleName}): ${e.message ?: "desconocido"}"
+          val diag = buildDiagnosticReport(
+            operation = "GET $url",
+            deviceId = settings.deviceId,
+            httpCode = result.httpCode,
+            errorCode = e.javaClass.simpleName,
+            errorMessage = e.message ?: "Error al guardar en SQLite",
+            stackTrace = e.stackTraceToString().take(1800),
+            responseSnippet = result.responseBody.take(800),
+          )
+          dao.upsertSyncSettings(
+            settings.copy(
+              lastAttemptMillis = now,
+              lastSyncMessage = "$errSummary\n---\n$diag",
+            )
+          )
+          SyncRuntimeStatus(
+            phase = SyncPhase.ERROR,
+            message = errSummary,
+            lastSentCount = lastSentCount,
+            diagnosticReport = diag,
+          ).also { _runtimeStatus.value = it }
+        }
       }
 
       is SyncTransportResult.Failure -> {
-        handleSyncFailure(settings, batch = null, failure = result, now = now)
+        handleSyncFailure(settings, batch = null, failure = result, now = now, endpointUrl = url)
       }
     }
   }
@@ -389,13 +442,11 @@ class SyncManager(
     val serverTs = if (data.has("serverTimestampMillis")) data.optLong("serverTimestampMillis") else null
     val changes = data.optJSONObject("changes") ?: return PullApplyOutcome(0, serverTs)
 
-    var count = 0
-
+    val typesList = mutableListOf<TransactionTypeEntity>()
     changes.optJSONArray("transactionTypes")?.let { arr ->
-      val list = mutableListOf<TransactionTypeEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        list.add(
+        typesList.add(
           TransactionTypeEntity(
             id = o.getString("id"),
             code = o.optString("code", "GASTO"),
@@ -405,17 +456,13 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertTypes(list)
-        count += list.size
-      }
     }
 
+    val classificationsList = mutableListOf<ClassificationEntity>()
     changes.optJSONArray("classifications")?.let { arr ->
-      val list = mutableListOf<ClassificationEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        list.add(
+        classificationsList.add(
           ClassificationEntity(
             id = o.getString("id"),
             typeId = o.getString("typeId"),
@@ -429,17 +476,13 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertClassifications(list)
-        count += list.size
-      }
     }
 
+    val detailsList = mutableListOf<DetailItemEntity>()
     changes.optJSONArray("details")?.let { arr ->
-      val list = mutableListOf<DetailItemEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        list.add(
+        detailsList.add(
           DetailItemEntity(
             id = o.getString("id"),
             classificationId = o.getString("classificationId"),
@@ -452,17 +495,13 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertDetails(list)
-        count += list.size
-      }
     }
 
+    val accountsList = mutableListOf<AccountEntity>()
     changes.optJSONArray("accounts")?.let { arr ->
-      val list = mutableListOf<AccountEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        list.add(
+        accountsList.add(
           AccountEntity(
             id = o.getString("id"),
             name = o.getString("name"),
@@ -478,17 +517,13 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertAccounts(list)
-        count += list.size
-      }
     }
 
+    val merchantsList = mutableListOf<MerchantEntity>()
     changes.optJSONArray("merchants")?.let { arr ->
-      val list = mutableListOf<MerchantEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        list.add(
+        merchantsList.add(
           MerchantEntity(
             id = o.getString("id"),
             name = o.getString("name"),
@@ -500,17 +535,13 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertMerchants(list)
-        count += list.size
-      }
     }
 
+    val rulesList = mutableListOf<ScheduledRuleEntity>()
     changes.optJSONArray("scheduledRules")?.let { arr ->
-      val list = mutableListOf<ScheduledRuleEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
-        list.add(
+        rulesList.add(
           ScheduledRuleEntity(
             id = o.getString("id"),
             title = o.getString("title"),
@@ -532,18 +563,14 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertScheduledRules(list)
-        count += list.size
-      }
     }
 
+    val transactionsList = mutableListOf<FinanceTransactionEntity>()
     changes.optJSONArray("transactions")?.let { arr ->
-      val list = mutableListOf<FinanceTransactionEntity>()
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
         val updated = o.optLong("updatedAtMillis", now)
-        list.add(
+        transactionsList.add(
           FinanceTransactionEntity(
             id = o.getString("id"),
             createdAtMillis = o.optLong("createdAtMillis", updated),
@@ -565,11 +592,26 @@ class SyncManager(
           )
         )
       }
-      if (list.isNotEmpty()) {
-        dao.insertTransactions(list)
-        count += list.size
-      }
     }
+
+    dao.applyPullChangesAtomic(
+      types = typesList,
+      classifications = classificationsList,
+      details = detailsList,
+      accounts = accountsList,
+      merchants = merchantsList,
+      scheduledRules = rulesList,
+      transactions = transactionsList,
+    )
+
+    val count =
+      typesList.size +
+        classificationsList.size +
+        detailsList.size +
+        accountsList.size +
+        merchantsList.size +
+        rulesList.size +
+        transactionsList.size
 
     return PullApplyOutcome(appliedCount = count, serverTimestampMillis = serverTs)
   }
@@ -582,11 +624,39 @@ class SyncManager(
     return null
   }
 
+  private fun buildDiagnosticReport(
+    operation: String,
+    deviceId: String,
+    httpCode: Int?,
+    errorCode: String?,
+    errorMessage: String,
+    stackTrace: String? = null,
+    responseSnippet: String? = null,
+  ): String {
+    return buildString {
+      appendLine("=== Diagnóstico de Sincronización (Mis Finanzas v1.2) ===")
+      appendLine("Timestamp: ${ApiJsonBuilder.formatIsoUtc(System.currentTimeMillis())}")
+      appendLine("Operación: $operation")
+      appendLine("DeviceId: $deviceId")
+      if (httpCode != null) appendLine("HTTP Status: $httpCode")
+      if (!errorCode.isNullOrBlank()) appendLine("Error Code: $errorCode")
+      appendLine("Mensaje: $errorMessage")
+      if (!responseSnippet.isNullOrBlank()) {
+        appendLine("Respuesta (fragmento): $responseSnippet")
+      }
+      if (!stackTrace.isNullOrBlank()) {
+        appendLine("Stacktrace:")
+        appendLine(stackTrace)
+      }
+    }
+  }
+
   private suspend fun handleSyncFailure(
     settings: SyncSettingsEntity,
     batch: SyncBatchPayload?,
     failure: SyncTransportResult.Failure,
     now: Long,
+    endpointUrl: String = settings.apiEndpointUrl,
   ): SyncRuntimeStatus {
     val userMessage =
       when (failure.errorCode) {
@@ -609,6 +679,15 @@ class SyncManager(
         else -> failure.message
       }
 
+    val diag =
+      buildDiagnosticReport(
+        operation = if (batch != null) "POST $endpointUrl" else "GET $endpointUrl",
+        deviceId = settings.deviceId,
+        httpCode = failure.httpCode,
+        errorCode = failure.errorCode,
+        errorMessage = userMessage,
+      )
+
     if (batch != null) {
       if (batch.includedQueueIds.isNotEmpty()) {
         batch.includedQueueIds.chunked(500).forEach { chunk ->
@@ -628,7 +707,7 @@ class SyncManager(
         isDeviceRevoked = settings.isDeviceRevoked || isRevoked,
         autoSyncOnWifi = if (isRevoked) false else settings.autoSyncOnWifi,
         lastAttemptMillis = now,
-        lastSyncMessage = userMessage,
+        lastSyncMessage = "$userMessage\n---\n$diag",
       )
     )
 
@@ -637,6 +716,7 @@ class SyncManager(
       phase = phase,
       message = userMessage,
       lastSentCount = 0,
+      diagnosticReport = diag,
     ).also { _runtimeStatus.value = it }
   }
 

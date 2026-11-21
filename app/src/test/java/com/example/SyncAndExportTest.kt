@@ -332,4 +332,86 @@ class SyncAndExportTest {
     assertTrue(revokedSettings.isDeviceRevoked)
     assertFalse(revokedSettings.autoSyncOnWifi)
   }
+
+  @Test
+  fun pullRemoteChanges_fullCatalogOverSeededDb_succeedsWithoutSqliteConstraintTrigger1811() = runTest {
+    val types = repository.types.first()
+    val classifications = repository.classifications.first()
+    val details = repository.details.first()
+    val accounts = repository.accounts.first()
+
+    val cls = classifications.first()
+    val det = details.first { it.classificationId == cls.id }
+    val acc = accounts.first()
+
+    repository.saveSyncSettings(
+      SyncSettingsEntity(
+        apiEndpointUrl = "https://api.ejemplo.com",
+        autoSyncOnWifi = true,
+      )
+    )
+
+    val fakeTransport =
+      object : SyncTransport {
+        override suspend fun postJson(
+          endpointUrl: String,
+          jsonPayload: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+          idempotencyKey: String?,
+        ): SyncTransportResult =
+          SyncTransportResult.Success(httpCode = 200, responseBody = """{"success":true}""")
+
+        override suspend fun getJson(
+          endpointUrl: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+        ): SyncTransportResult {
+          // Return existing seeded transactionTypes, classifications, details, and 2 historical transactions
+          return SyncTransportResult.Success(
+            httpCode = 200,
+            responseBody =
+              """
+              {
+                "success": true,
+                "data": {
+                  "sinceMillis": 0,
+                  "serverTimestampMillis": 1795235495938,
+                  "changes": {
+                    "transactionTypes": [
+                      {"id": "${types[0].id}", "code": "${types[0].code}", "name": "${types[0].name}", "sortOrder": 0, "default": true},
+                      {"id": "${types[1].id}", "code": "${types[1].code}", "name": "${types[1].name}", "sortOrder": 1, "default": true}
+                    ],
+                    "classifications": [
+                      {"id": "${cls.id}", "typeId": "${cls.typeId}", "name": "${cls.name}", "sortOrder": ${cls.sortOrder}, "isActive": true, "isPinned": false, "monthlyBudgetCents": null, "default": true}
+                    ],
+                    "details": [
+                      {"id": "${det.id}", "classificationId": "${det.classificationId}", "name": "${det.name}", "sortOrder": ${det.sortOrder}, "isActive": true, "isPinned": false, "default": true}
+                    ],
+                    "accounts": [
+                      {"id": "${acc.id}", "name": "${acc.name}", "shortLabel": "${acc.shortLabel}", "accountKind": "${acc.accountKind}", "balanceCents": 450000, "currency": "MXN", "sortOrder": 0, "isActive": true, "isPinned": false, "default": true}
+                    ],
+                    "transactions": [
+                      {"id": "e5ceb67e-987a-5ed9-9b80-62a842a8e4c4", "operationEpochDay": 20775, "operationDate": "18/11/2026", "fiscalPeriodKey": "2026-12", "fiscalPeriodLabel": "dic 2026", "typeId": "${cls.typeId}", "classificationId": "${cls.id}", "detailId": "${det.id}", "accountId": "${acc.id}", "merchantName": "Netflix", "amountCents": 26900, "note": "Histórico 1", "default": true, "updatedAtMillis": 1794999604213}
+                    ]
+                  }
+                }
+              }
+              """.trimIndent(),
+          )
+        }
+      }
+
+    val syncManager = SyncManager(dao = db.financeDao(), transport = fakeTransport)
+    val result =
+      syncManager.pullRemoteChanges(
+        isWifiConnected = true,
+        forceAttemptWhenNotWifi = true,
+        sinceMillisOverride = 0L,
+      )
+
+    assertEquals(SyncPhase.SYNCED, result.phase)
+    assertEquals(6, result.lastPulledCount)
+    assertEquals(1, repository.transactions.first().size)
+    assertEquals(14, repository.classifications.first().size)
+    assertEquals(65, repository.details.first().size)
+  }
 }

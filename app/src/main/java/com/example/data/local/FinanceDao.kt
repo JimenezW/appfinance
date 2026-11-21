@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -21,7 +22,7 @@ interface FinanceDao {
   @Query("SELECT COUNT(*) FROM transaction_types")
   suspend fun countTypes(): Int
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertTypes(types: List<TransactionTypeEntity>)
 
   // --- Classifications ---
@@ -30,10 +31,10 @@ interface FinanceDao {
   )
   fun observeAllClassifications(): Flow<List<ClassificationEntity>>
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertClassification(item: ClassificationEntity)
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertClassifications(items: List<ClassificationEntity>)
 
   @Update
@@ -51,10 +52,10 @@ interface FinanceDao {
   )
   fun observeAllDetails(): Flow<List<DetailItemEntity>>
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertDetail(item: DetailItemEntity)
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertDetails(items: List<DetailItemEntity>)
 
   @Update
@@ -70,10 +71,10 @@ interface FinanceDao {
   @Query("SELECT * FROM accounts WHERE deletedAtMillis IS NULL ORDER BY sortOrder ASC, name ASC")
   fun observeAllAccounts(): Flow<List<AccountEntity>>
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertAccount(account: AccountEntity)
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertAccounts(accounts: List<AccountEntity>)
 
   @Update
@@ -97,10 +98,10 @@ interface FinanceDao {
   )
   suspend fun findMerchantByName(name: String): MerchantEntity?
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertMerchant(merchant: MerchantEntity)
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertMerchants(merchants: List<MerchantEntity>)
 
   @Update
@@ -118,10 +119,10 @@ interface FinanceDao {
   )
   fun observeAllScheduledRules(): Flow<List<ScheduledRuleEntity>>
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertScheduledRule(rule: ScheduledRuleEntity)
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertScheduledRules(rules: List<ScheduledRuleEntity>)
 
   @Update
@@ -144,10 +145,10 @@ interface FinanceDao {
   )
   suspend fun getAllTransactionsOnce(): List<FinanceTransactionEntity>
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertTransactionRaw(tx: FinanceTransactionEntity)
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  @Upsert
   suspend fun insertTransactions(txs: List<FinanceTransactionEntity>)
 
   @Update
@@ -299,6 +300,25 @@ interface FinanceDao {
         markTransactionsSynced(chunk, syncedAtMillis)
       }
     }
+  }
+
+  @Transaction
+  suspend fun applyPullChangesAtomic(
+    types: List<TransactionTypeEntity>,
+    classifications: List<ClassificationEntity>,
+    details: List<DetailItemEntity>,
+    accounts: List<AccountEntity>,
+    merchants: List<MerchantEntity>,
+    scheduledRules: List<ScheduledRuleEntity>,
+    transactions: List<FinanceTransactionEntity>,
+  ) {
+    if (types.isNotEmpty()) insertTypes(types)
+    if (classifications.isNotEmpty()) insertClassifications(classifications)
+    if (details.isNotEmpty()) insertDetails(details)
+    if (accounts.isNotEmpty()) insertAccounts(accounts)
+    if (merchants.isNotEmpty()) insertMerchants(merchants)
+    if (scheduledRules.isNotEmpty()) insertScheduledRules(scheduledRules)
+    if (transactions.isNotEmpty()) insertTransactions(transactions)
   }
 
   @Transaction

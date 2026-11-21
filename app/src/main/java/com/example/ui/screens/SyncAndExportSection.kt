@@ -345,6 +345,28 @@ fun SyncAndExportView(
               Spacer(modifier = Modifier.width(6.dp))
               Text("Descargar histórico completo (desde 0)")
             }
+
+            val latestDiagnostic =
+              state.syncRuntimeStatus.diagnosticReport
+                ?: state.syncSettings.lastSyncMessage?.takeIf { it.contains("=== Diagnóstico") }
+            if (!latestDiagnostic.isNullOrBlank()) {
+              OutlinedButton(
+                onClick = {
+                  jsonPreviewTitle = "Diagnóstico del Último Error"
+                  jsonPreviewContent = latestDiagnostic
+                },
+                modifier = Modifier.fillMaxWidth().height(42.dp).testTag("view_sync_diagnostic_btn"),
+                shape = RoundedCornerShape(12.dp),
+                colors =
+                  ButtonDefaults.outlinedButtonColors(
+                    contentColor = financeColors.expenseAccent
+                  ),
+              ) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Ver / Copiar diagnóstico del error")
+              }
+            }
           }
         }
       }
