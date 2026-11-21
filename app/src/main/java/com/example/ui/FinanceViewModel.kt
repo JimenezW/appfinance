@@ -145,8 +145,8 @@ data class FinanceUiState(
       return pendingSyncQueue.size + unqueuedUnsyncedTx
     }
 
-  private val classificationUsageStats: Map<String, Pair<Int, Long>>
-    get() {
+  private val classificationUsageStats: Map<String, Pair<Int, Long>> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val prev = map[tx.classificationId]
@@ -154,11 +154,11 @@ data class FinanceUiState(
         val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
         map[tx.classificationId] = count to last
       }
-      return map
+      map
     }
 
-  private val detailUsageStats: Map<String, Pair<Int, Long>>
-    get() {
+  private val detailUsageStats: Map<String, Pair<Int, Long>> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val prev = map[tx.detailId]
@@ -166,11 +166,11 @@ data class FinanceUiState(
         val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
         map[tx.detailId] = count to last
       }
-      return map
+      map
     }
 
-  private val accountUsageStats: Map<String, Pair<Int, Long>>
-    get() {
+  private val accountUsageStats: Map<String, Pair<Int, Long>> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val prev = map[tx.accountId]
@@ -178,11 +178,11 @@ data class FinanceUiState(
         val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
         map[tx.accountId] = count to last
       }
-      return map
+      map
     }
 
-  private val merchantUsageStats: Map<String, Pair<Int, Long>>
-    get() {
+  private val merchantUsageStats: Map<String, Pair<Int, Long>> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val map = HashMap<String, Pair<Int, Long>>()
       allTransactions.forEach { tx ->
         val key = tx.merchantName?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return@forEach
@@ -191,7 +191,7 @@ data class FinanceUiState(
         val last = maxOf(prev?.second ?: 0L, tx.createdAtMillis)
         map[key] = count to last
       }
-      return map
+      map
     }
 
   fun classificationUsageCount(id: String): Int = classificationUsageStats[id]?.first ?: 0
@@ -203,11 +203,11 @@ data class FinanceUiState(
   fun merchantUsageCount(name: String): Int =
     merchantUsageStats[name.trim().lowercase()]?.first ?: 0
 
-  val activeClassificationsForCapture: List<ClassificationEntity>
-    get() {
+  val activeClassificationsForCapture: List<ClassificationEntity> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val stats = classificationUsageStats
       val targetCode = TransactionTypes.codeFor(capture.typeId)
-      return allClassifications
+      allClassifications
         .filter { it.isActive && TransactionTypes.codeFor(it.typeId) == targetCode }
         .sortedWith(
           compareByDescending<ClassificationEntity> { it.isPinned }
@@ -225,11 +225,11 @@ data class FinanceUiState(
         ?: list.firstOrNull()?.id
     }
 
-  val activeDetailsForCapture: List<DetailItemEntity>
-    get() {
-      val classId = effectiveClassificationId ?: return emptyList()
+  val activeDetailsForCapture: List<DetailItemEntity> by
+    lazy(LazyThreadSafetyMode.NONE) {
+      val classId = effectiveClassificationId ?: return@lazy emptyList()
       val stats = detailUsageStats
-      return allDetails
+      allDetails
         .filter { it.isActive && it.classificationId == classId }
         .sortedWith(
           compareByDescending<DetailItemEntity> { it.isPinned }
@@ -246,10 +246,10 @@ data class FinanceUiState(
       return list.firstOrNull { it.id == capture.selectedDetailId }?.id ?: list.firstOrNull()?.id
     }
 
-  val activeAccounts: List<AccountEntity>
-    get() {
+  val activeAccounts: List<AccountEntity> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val stats = accountUsageStats
-      return allAccounts
+      allAccounts
         .filter { it.isActive }
         .sortedWith(
           compareByDescending<AccountEntity> { it.isPinned }
@@ -266,10 +266,10 @@ data class FinanceUiState(
       return list.firstOrNull { it.id == capture.selectedAccountId }?.id ?: list.firstOrNull()?.id
     }
 
-  val activeMerchants: List<MerchantEntity>
-    get() {
+  val activeMerchants: List<MerchantEntity> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val stats = merchantUsageStats
-      return allMerchants
+      allMerchants
         .filter { it.isActive }
         .sortedWith(
           compareByDescending<MerchantEntity> { it.isPinned }
@@ -287,25 +287,24 @@ data class FinanceUiState(
         effectiveDetailId != null &&
         effectiveAccountId != null
 
-  val totalBalanceCents: Long
-    get() = activeAccounts.sumOf { it.balanceCents }
+  val totalBalanceCents: Long by lazy(LazyThreadSafetyMode.NONE) { activeAccounts.sumOf { it.balanceCents } }
 
-  val classificationsById: Map<String, ClassificationEntity>
-    get() = allClassifications.associateBy { it.id }
+  val classificationsById: Map<String, ClassificationEntity> by
+    lazy(LazyThreadSafetyMode.NONE) { allClassifications.associateBy { it.id } }
 
-  val detailsById: Map<String, DetailItemEntity>
-    get() = allDetails.associateBy { it.id }
+  val detailsById: Map<String, DetailItemEntity> by
+    lazy(LazyThreadSafetyMode.NONE) { allDetails.associateBy { it.id } }
 
-  val accountsById: Map<String, AccountEntity>
-    get() = allAccounts.associateBy { it.id }
+  val accountsById: Map<String, AccountEntity> by
+    lazy(LazyThreadSafetyMode.NONE) { allAccounts.associateBy { it.id } }
 
-  val periodTransactions: List<TransactionDisplay>
-    get() {
+  val periodTransactions: List<TransactionDisplay> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val classMap = classificationsById
       val detMap = detailsById
       val accMap = accountsById
       val query = searchQuery.trim().lowercase()
-      return allTransactions
+      allTransactions
         .filter { it.fiscalPeriodKey == selectedPeriod.key }
         .filter { selectedAccountFilterId == null || it.accountId == selectedAccountFilterId }
         .map { tx ->
@@ -329,23 +328,25 @@ data class FinanceUiState(
         }
     }
 
-  val periodIncomeCents: Long
-    get() =
+  val periodIncomeCents: Long by
+    lazy(LazyThreadSafetyMode.NONE) {
       allTransactions
         .filter { it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.isIncome(it.typeId) }
         .sumOf { it.amountCents }
+    }
 
-  val periodExpenseCents: Long
-    get() =
+  val periodExpenseCents: Long by
+    lazy(LazyThreadSafetyMode.NONE) {
       allTransactions
         .filter { it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.isExpense(it.typeId) }
         .sumOf { it.amountCents }
+    }
 
-  val expenseBreakdown: List<CategoryStat>
-    get() = buildBreakdown(TransactionTypes.GASTO_UUID, periodExpenseCents)
+  val expenseBreakdown: List<CategoryStat> by
+    lazy(LazyThreadSafetyMode.NONE) { buildBreakdown(TransactionTypes.GASTO_UUID, periodExpenseCents) }
 
-  val incomeBreakdown: List<CategoryStat>
-    get() = buildBreakdown(TransactionTypes.INGRESO_UUID, periodIncomeCents)
+  val incomeBreakdown: List<CategoryStat> by
+    lazy(LazyThreadSafetyMode.NONE) { buildBreakdown(TransactionTypes.INGRESO_UUID, periodIncomeCents) }
 
   val mayorRubro: CategoryStat?
     get() = expenseBreakdown.firstOrNull()
@@ -375,8 +376,8 @@ data class FinanceUiState(
       .sortedByDescending { it.totalCents }
   }
 
-  val pendingScheduledRules: List<PendingRuleDisplay>
-    get() {
+  val pendingScheduledRules: List<PendingRuleDisplay> by
+    lazy(LazyThreadSafetyMode.NONE) {
       val todayEpoch = FiscalPeriodCalculator.todayEpochDay()
       val todayYmd = FiscalPeriodCalculator.epochDayToYmd(todayEpoch)
       val daysInMonth = FiscalPeriodCalculator.daysInMonth(todayYmd.year, todayYmd.month)
@@ -384,7 +385,7 @@ data class FinanceUiState(
       val detMap = detailsById
       val accMap = accountsById
 
-      return allScheduledRules
+      allScheduledRules
         .filter { it.isActive }
         .mapNotNull { rule ->
           val targetDay =
@@ -562,15 +563,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
           }
           wasWifiConnected = trigger.isWifiConnected
 
+          val revoked = uiState.value.syncSettings.isDeviceRevoked
           syncManager.refreshIdleStatus(
             isWifiConnected = trigger.isWifiConnected,
             pendingCount = trigger.pendingCount,
             apiUrlConfigured = trigger.apiEndpointUrl.isNotBlank(),
-            isDeviceRevoked = uiState.value.syncSettings.isDeviceRevoked,
+            isDeviceRevoked = revoked,
           )
 
+          val appCtx = getApplication<Application>()
+          if (revoked || !trigger.autoSyncOnWifi || trigger.apiEndpointUrl.isBlank()) {
+            com.example.data.sync.WifiSyncScheduler.cancelAll(appCtx)
+          } else {
+            com.example.data.sync.WifiSyncScheduler.schedulePeriodicOnWifi(appCtx)
+            if (trigger.pendingCount > 0) {
+              com.example.data.sync.WifiSyncScheduler.scheduleImmediateOnWifi(appCtx)
+            }
+          }
+
           if (
-            !uiState.value.syncSettings.isDeviceRevoked &&
+            !revoked &&
               trigger.isWifiConnected &&
               trigger.autoSyncOnWifi &&
               trigger.pendingCount > 0 &&
