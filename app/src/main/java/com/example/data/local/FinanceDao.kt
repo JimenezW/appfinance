@@ -147,6 +147,9 @@ interface FinanceDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertTransactionRaw(tx: FinanceTransactionEntity)
 
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertTransactions(txs: List<FinanceTransactionEntity>)
+
   @Update
   suspend fun updateTransactionRaw(tx: FinanceTransactionEntity)
 

@@ -192,20 +192,73 @@ class SyncAndExportTest {
     )
 
     var lastPostedJson: String? = null
-    var shouldSucceed = false
+    var lastPostedUrl: String? = null
+    var mode = "503"
     val fakeTransport =
       object : SyncTransport {
         override suspend fun postJson(
           endpointUrl: String,
-          authToken: String?,
           jsonPayload: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+          idempotencyKey: String?,
         ): SyncTransportResult {
+          lastPostedUrl = endpointUrl
           lastPostedJson = jsonPayload
-          return if (shouldSucceed) {
-            SyncTransportResult.Success(httpCode = 200, responseBody = """{"success":true}""")
-          } else {
-            SyncTransportResult.Failure(httpCode = 503, message = "HTTP 503: Servicio no disponible")
+          return when (mode) {
+            "200" ->
+              SyncTransportResult.Success(
+                httpCode = 200,
+                responseBody =
+                  """{"success":true,"data":{"serverTimestampMillis":1795211100000,"syncedTransactionIds":["$txId"],"deletedTransactionIds":[],"failedItems":[]}}""",
+              )
+            "REVOKED" ->
+              SyncTransportResult.Failure(
+                httpCode = 403,
+                errorCode = "DEVICE_REVOKED",
+                message = "Dispositivo revocado",
+              )
+            else ->
+              SyncTransportResult.Failure(
+                httpCode = 503,
+                errorCode = "SERVICE_UNAVAILABLE",
+                message = "HTTP 503: Servicio no disponible",
+              )
           }
+        }
+
+        override suspend fun getJson(
+          endpointUrl: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+        ): SyncTransportResult {
+          return SyncTransportResult.Success(
+            httpCode = 200,
+            responseBody =
+              """
+              {
+                "success": true,
+                "data": {
+                  "sinceMillis": 0,
+                  "serverTimestampMillis": 1795235495938,
+                  "changes": {
+                    "accounts": [
+                      {
+                        "id": "${acc.id}",
+                        "name": "${acc.name}",
+                        "shortLabel": "${acc.shortLabel}",
+                        "accountKind": "${acc.accountKind}",
+                        "balanceCents": 599100,
+                        "currency": "MXN",
+                        "sortOrder": 0,
+                        "isActive": true,
+                        "isPinned": false,
+                        "default": true
+                      }
+                    ]
+                  }
+                }
+              }
+              """.trimIndent(),
+          )
         }
       }
 
@@ -219,31 +272,64 @@ class SyncAndExportTest {
     val noUrlResult = syncManager.syncPendingIfReady(isWifiConnected = true)
     assertEquals(SyncPhase.WAITING_API_CONFIG, noUrlResult.phase)
 
-    // 3. Configure API URL, transport returns 503 -> error recorded, stays pending/failed
+    // 3. Configure base API URL, transport returns 503 -> error recorded, stays pending/failed
     repository.saveSyncSettings(
       SyncSettingsEntity(
-        apiEndpointUrl = "https://api.ejemplo.com/api/v1/sync/batch",
+        apiEndpointUrl = "https://api.ejemplo.com",
+        enrollmentToken = "enroll-123",
         autoSyncOnWifi = true,
       )
     )
     val errorResult = syncManager.syncPendingIfReady(isWifiConnected = true)
     assertEquals(SyncPhase.ERROR, errorResult.phase)
+    assertEquals("https://api.ejemplo.com/api/v1/sync/batch", lastPostedUrl)
     assertEquals(1, db.financeDao().getPendingSyncQueueOnce().size)
     assertEquals(SyncStatus.FAILED, db.financeDao().getPendingSyncQueueOnce().first().syncStatus)
 
-    // 4. API returns HTTP 200 -> marks queue & transaction SYNCED
-    shouldSucceed = true
-    val successResult = syncManager.syncPendingIfReady(isWifiConnected = true)
+    // 4. API returns HTTP 200 -> marks queue & transaction SYNCED, marks device enrolled, and pulls changes
+    mode = "200"
+    val successResult = syncManager.syncPendingIfReady(isWifiConnected = true, pullAfterPush = true)
     assertEquals(SyncPhase.SYNCED, successResult.phase)
     assertEquals(1, successResult.lastSentCount)
+    assertEquals(1, successResult.lastPulledCount)
     assertNotNull(lastPostedJson)
     val sentBatch = JSONObject(lastPostedJson!!)
     assertEquals("wifi_sync_batch", sentBatch.getString("exportType"))
     assertTrue(sentBatch.getString("deviceId").isNotBlank())
+    assertTrue(sentBatch.getJSONObject("adminChanges").has("deletedIds"))
     assertEquals(1, sentBatch.getJSONArray("capturedTransactions").length())
 
     assertEquals(0, db.financeDao().getPendingSyncQueueOnce().size)
     val storedTx = db.financeDao().getAllTransactionsOnce().first()
     assertEquals(SyncStatus.SYNCED, storedTx.syncStatus)
+
+    // Pulled account balance and server cursor must be persisted
+    val updatedAccount = repository.accounts.first().first { it.id == acc.id }
+    assertEquals(599100L, updatedAccount.balanceCents)
+    val updatedSettings = db.financeDao().getSyncSettingsOnce()!!
+    assertTrue(updatedSettings.isDeviceEnrolled)
+    assertEquals(1795235495938L, updatedSettings.lastSyncServerMillis)
+
+    // 5. DEVICE_REVOKED (403) must disable auto-sync and transition to REVOKED
+    repository.recordTransaction(
+      FinanceTransactionEntity(
+        id = UUID.randomUUID().toString(),
+        createdAtMillis = 1_700_000_000_001L,
+        operationEpochDay = 20_770L,
+        fiscalPeriodKey = "2026-11",
+        fiscalPeriodLabel = "nov 2026",
+        typeId = TransactionTypes.GASTO_UUID,
+        classificationId = cls.id,
+        detailId = det.id,
+        accountId = acc.id,
+        amountCents = 1000L,
+      )
+    )
+    mode = "REVOKED"
+    val revokedResult = syncManager.syncPendingIfReady(isWifiConnected = true)
+    assertEquals(SyncPhase.REVOKED, revokedResult.phase)
+    val revokedSettings = db.financeDao().getSyncSettingsOnce()!!
+    assertTrue(revokedSettings.isDeviceRevoked)
+    assertFalse(revokedSettings.autoSyncOnWifi)
   }
 }

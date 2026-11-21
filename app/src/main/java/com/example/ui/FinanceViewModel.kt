@@ -566,10 +566,12 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             isWifiConnected = trigger.isWifiConnected,
             pendingCount = trigger.pendingCount,
             apiUrlConfigured = trigger.apiEndpointUrl.isNotBlank(),
+            isDeviceRevoked = uiState.value.syncSettings.isDeviceRevoked,
           )
 
           if (
-            trigger.isWifiConnected &&
+            !uiState.value.syncSettings.isDeviceRevoked &&
+              trigger.isWifiConnected &&
               trigger.autoSyncOnWifi &&
               trigger.pendingCount > 0 &&
               trigger.apiEndpointUrl.isNotBlank()
@@ -1114,6 +1116,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         current.copy(
           apiEndpointUrl = endpointUrl.trim(),
           apiAuthToken = authToken.trim(),
+          enrollmentToken = authToken.trim(),
           autoSyncOnWifi = autoSyncOnWifi,
           deviceLabel = deviceLabel.trim().ifEmpty { "Android" },
         )
@@ -1126,7 +1129,11 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     connectivityMonitor.refreshNow()
     viewModelScope.launch {
       val wifiConnected = connectivityMonitor.connectivityState.value.isWifiConnected
-      val status = syncManager.syncPendingIfReady(isWifiConnected = wifiConnected)
+      val status =
+        syncManager.syncPendingIfReady(
+          isWifiConnected = wifiConnected,
+          pullAfterPush = true,
+        )
       _snackbarMessages.tryEmit(status.message)
     }
   }

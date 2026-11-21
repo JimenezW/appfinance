@@ -1,10 +1,17 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.fragment.app.FragmentActivity
+import com.example.data.security.BiometricLockHelper
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
@@ -42,13 +49,63 @@ import com.example.ui.screens.SplashScreen
 import com.example.ui.theme.MisFinanzasTheme
 import kotlinx.coroutines.delay
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    val requiresLock = BiometricLockHelper.canAuthenticate(this)
     setContent {
       MisFinanzasTheme {
-        MisFinanzasApp()
+        var isUnlocked by remember { mutableStateOf(!requiresLock) }
+        var authError by remember { mutableStateOf<String?>(null) }
+
+        LaunchedEffect(requiresLock) {
+          if (requiresLock && !isUnlocked) {
+            BiometricLockHelper.authenticate(
+              activity = this@MainActivity,
+              onSuccess = {
+                authError = null
+                isUnlocked = true
+              },
+              onFailure = { msg -> authError = msg },
+            )
+          }
+        }
+
+        if (isUnlocked) {
+          MisFinanzasApp()
+        } else {
+          Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+              modifier = Modifier.fillMaxSize().padding(24.dp),
+              verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+              horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+              Text(
+                text = "Mis Finanzas bloqueado",
+                style = MaterialTheme.typography.titleLarge,
+              )
+              Text(
+                text = authError ?: "Usa tu huella, rostro o PIN del dispositivo para continuar.",
+                style = MaterialTheme.typography.bodyMedium,
+              )
+              Button(
+                onClick = {
+                  BiometricLockHelper.authenticate(
+                    activity = this@MainActivity,
+                    onSuccess = {
+                      authError = null
+                      isUnlocked = true
+                    },
+                    onFailure = { msg -> authError = msg },
+                  )
+                }
+              ) {
+                Text("Desbloquear")
+              }
+            }
+          }
+        }
       }
     }
   }
