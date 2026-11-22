@@ -134,7 +134,6 @@ fun BalancesScreen(
           totalAvailableCents = state.totalBalanceCents,
           periodIncomeCents = state.periodIncomeCents,
           periodExpenseCents = state.periodExpenseCents,
-          periodLabel = state.selectedPeriod.label,
         )
       }
 
@@ -194,9 +193,9 @@ fun BalancesScreen(
             Text(
               text =
                 if (totalInPeriod > 0) {
-                  "Movimientos de ${state.selectedPeriod.label} ($shownCount de $totalInPeriod)"
+                  "Movimientos ($shownCount de $totalInPeriod)"
                 } else {
-                  "Movimientos de ${state.selectedPeriod.label} (0)"
+                  "Movimientos (0)"
                 },
               style = MaterialTheme.typography.titleSmall,
             )
@@ -264,17 +263,25 @@ fun BalancesScreen(
           TransactionRowCard(item = item, onClick = { editingItem = item })
         }
 
-        if (state.periodTransactions.size > visibleMovementsCount) {
-          val remaining = state.periodTransactions.size - visibleMovementsCount
-          val nextBatch = minOf(5, remaining)
-          item(key = "load_more_movements_btn") {
+        if (state.periodTransactions.size > 5) {
+          val hasMoreToShow = state.periodTransactions.size > visibleMovementsCount
+          item(key = "load_more_or_hide_movements_btn") {
             OutlinedButton(
-              onClick = { visibleMovementsCount += 5 },
-              modifier = Modifier.fillMaxWidth().height(46.dp).testTag("load_more_movements_btn"),
+              onClick = {
+                if (hasMoreToShow) {
+                  visibleMovementsCount += 5
+                } else {
+                  visibleMovementsCount = 5
+                }
+              },
+              modifier =
+                Modifier.fillMaxWidth()
+                  .height(46.dp)
+                  .testTag(if (hasMoreToShow) "load_more_movements_btn" else "hide_movements_btn"),
               shape = RoundedCornerShape(12.dp),
             ) {
               Text(
-                text = "Ver más (+$nextBatch movimientos • quedan $remaining)",
+                text = if (hasMoreToShow) "Ver más" else "Ocultar",
                 fontWeight = FontWeight.SemiBold,
               )
             }
@@ -365,13 +372,18 @@ private fun HeroTotalBalanceCard(
   totalAvailableCents: Long,
   periodIncomeCents: Long,
   periodExpenseCents: Long,
-  periodLabel: String,
 ) {
   val financeColors = LocalFinanceColors.current
+  val isNegative = periodNetBalanceCents < 0L
+  val cardBackground =
+    if (isNegative) Color(0xFF7F1D1D) else financeColors.heroCardBackground
+  val titleAccent =
+    if (isNegative) Color(0xFFFECACA) else Color(0xFFA7F3D0)
+
   Surface(
     modifier = Modifier.fillMaxWidth().testTag("hero_total_balance_card"),
     shape = RoundedCornerShape(18.dp),
-    color = financeColors.heroCardBackground,
+    color = cardBackground,
   ) {
     Column(
       modifier = Modifier.padding(18.dp),
@@ -383,15 +395,15 @@ private fun HeroTotalBalanceCard(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
-          text = "SALDO DISPONIBLE (${periodLabel.uppercase()})",
+          text = "SALDO DISPONIBLE",
           style = MaterialTheme.typography.labelSmall,
-          color = Color(0xFFA7F3D0),
+          color = titleAccent,
           fontWeight = FontWeight.Bold,
         )
         Text(
-          text = "Acumulado cuentas: ${FiscalPeriodCalculator.formatMxn(totalAvailableCents)}",
+          text = "Acumulado:${FiscalPeriodCalculator.formatMxn(totalAvailableCents)}",
           style = MaterialTheme.typography.labelSmall,
-          color = Color.White.copy(alpha = 0.78f),
+          color = Color.White.copy(alpha = 0.85f),
         )
       }
       Text(
@@ -399,14 +411,14 @@ private fun HeroTotalBalanceCard(
         fontFamily = MonoFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 30.sp,
-        color = if (periodNetBalanceCents < 0L) Color(0xFFFECACA) else Color.White,
+        color = Color.White,
       )
       Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
-          text = "Ingresos ($periodLabel): +${FiscalPeriodCalculator.formatMxn(periodIncomeCents)}",
+          text = "Ingresos: +${FiscalPeriodCalculator.formatMxn(periodIncomeCents)}",
           style = MaterialTheme.typography.labelMedium,
           color = Color(0xFFA7F3D0),
         )
