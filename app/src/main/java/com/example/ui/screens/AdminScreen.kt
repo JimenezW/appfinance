@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.Fingerprint
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material.icons.rounded.Sync
@@ -58,6 +59,7 @@ import com.example.data.local.ClassificationEntity
 import com.example.data.local.DetailItemEntity
 import com.example.data.local.MerchantEntity
 import com.example.data.local.TransactionTypes
+import com.example.data.security.BiometricLockHelper
 import com.example.ui.AdminSubSection
 import com.example.ui.FinanceUiState
 import com.example.ui.theme.LocalFinanceColors
@@ -164,7 +166,11 @@ private fun AdminHubView(
   onNotify: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  val context = LocalContext.current
   val financeColors = LocalFinanceColors.current
+  var biometricLockEnabled by remember {
+    mutableStateOf(BiometricLockHelper.isBiometricLockEnabled(context))
+  }
   val gastoCount = state.allClassifications.count { TransactionTypes.isExpense(it.typeId) && it.isActive }
   val ingresoCount = state.allClassifications.count { TransactionTypes.isIncome(it.typeId) && it.isActive }
 
@@ -309,6 +315,77 @@ private fun AdminHubView(
                 fontWeight = FontWeight.Bold,
                 color =
                   if (autoWifiEnabled) financeColors.incomeAccent
+                  else MaterialTheme.colorScheme.primary,
+              )
+            }
+          }
+
+          Surface(
+            onClick = {
+              val nextValue = !biometricLockEnabled
+              biometricLockEnabled = nextValue
+              BiometricLockHelper.setBiometricLockEnabled(context, nextValue)
+              onNotify(
+                if (nextValue) "Autenticación con huella / PIN activada al entrar"
+                else "Autenticación con huella / PIN desactivada"
+              )
+            },
+            shape = RoundedCornerShape(12.dp),
+            color =
+              if (biometricLockEnabled) financeColors.periodContainer
+              else financeColors.subtleSurface,
+            border =
+              BorderStroke(
+                1.dp,
+                if (biometricLockEnabled) financeColors.periodAccent.copy(alpha = 0.45f)
+                else financeColors.cardBorder,
+              ),
+            modifier = Modifier.fillMaxWidth().testTag("admin_hub_biometric_lock_btn"),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f),
+              ) {
+                Icon(
+                  imageVector = Icons.Rounded.Fingerprint,
+                  contentDescription = null,
+                  tint =
+                    if (biometricLockEnabled) financeColors.periodAccent
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.size(18.dp),
+                )
+                Column {
+                  Text(
+                    text = "Autenticación con huella / PIN al entrar",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color =
+                      if (biometricLockEnabled) financeColors.periodAccent
+                      else MaterialTheme.colorScheme.onSurface,
+                  )
+                  Text(
+                    text =
+                      if (biometricLockEnabled) "Activa • solicita huella, rostro o PIN al abrir el app"
+                      else "Inactiva • toca para solicitar huella o PIN al entrar",
+                    style = MaterialTheme.typography.labelSmall,
+                    color =
+                      if (biometricLockEnabled) financeColors.periodAccent
+                      else MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+              Text(
+                text = if (biometricLockEnabled) "ACTIVO" else "ACTIVAR",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color =
+                  if (biometricLockEnabled) financeColors.periodAccent
                   else MaterialTheme.colorScheme.primary,
               )
             }

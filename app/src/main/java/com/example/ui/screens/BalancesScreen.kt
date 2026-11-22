@@ -159,7 +159,15 @@ fun BalancesScreen(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
           ) {
-            state.activeAccounts.forEach { acc ->
+            val orderedAccounts =
+              remember(state.activeAccounts) {
+                state.activeAccounts.sortedWith(
+                  compareByDescending<AccountEntity> { it.isPinned }
+                    .thenBy { it.sortOrder }
+                    .thenBy { it.name }
+                )
+              }
+            orderedAccounts.forEach { acc ->
               AccountBalanceTile(
                 account = acc,
                 periodBalanceCents = state.periodAccountBalanceCents(acc.id),

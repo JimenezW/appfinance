@@ -425,17 +425,24 @@ data class FinanceUiState(
   }
 
   /**
-   * Period-scoped net balance for each account in the selected fiscal period,
-   * applying the WithdrawalTransferRule (DEBIT -monto, CASH +monto) on Ingreso -> Otro -> Retiro.
+   * Period-scoped balance for each account in the selected fiscal period,
+   * anchored on authoritative account balances and applying WithdrawalTransferRule
+   * (DEBIT -monto, CASH +monto) on Ingreso -> Otro -> Retiro.
    */
   val periodAccountBalancesCents: Map<String, Long> by
     lazy(LazyThreadSafetyMode.NONE) {
-      val map = HashMap<String, Long>()
       val classMap = classificationsById
       val detMap = detailsById
-      allTransactions
-        .filter { it.effectivePeriodKey() == selectedPeriod.key }
-        .forEach { tx ->
+      val txsInSelectedPeriod =
+        allTransactions.filter { it.effectivePeriodKey() == selectedPeriod.key }
+      if (allTransactions.isNotEmpty() && txsInSelectedPeriod.isEmpty()) {
+        return@lazy emptyMap()
+      }
+
+      val hasAuthoritativeBalances = allAccounts.any { it.balanceCents != 0L }
+      if (!hasAuthoritativeBalances) {
+        val map = HashMap<String, Long>()
+        txsInSelectedPeriod.forEach { tx ->
           val deltas =
             com.example.domain.WithdrawalTransferRule.computeAccountBalanceDeltas(
               tx = tx,
@@ -447,7 +454,88 @@ data class FinanceUiState(
             map[accId] = (map[accId] ?: 0L) + delta
           }
         }
-      map
+        return@lazy map
+      }
+
+      val sortedActive =
+        allAccounts
+          .filter { it.isActive }
+          .sortedWith(compareBy<AccountEntity> { it.sortOrder }.thenBy { it.name })
+      val primaryDebit =
+        sortedActive.firstOrNull { it.accountKind.equals("DEBIT", ignoreCase = true) }
+          ?: allAccounts.firstOrNull { it.accountKind.equals("DEBIT", ignoreCase = true) }
+      val primaryCash =
+        sortedActive.firstOrNull { it.accountKind.equals("CASH", ignoreCase = true) }
+          ?: allAccounts.firstOrNull { it.accountKind.equals("CASH", ignoreCase = true) }
+
+      val withdrawalTxs = allTransactions.filter { isWithdrawalTransaction(it) }
+      val nonWithdrawalTxs = allTransactions.filter { !isWithdrawalTransaction(it) }
+      val totalWithdrawalCents = withdrawalTxs.sumOf { it.amountCents }
+
+      val currentBalances = HashMap<String, Long>()
+      allAccounts.forEach { acc -> currentBalances[acc.id] = acc.balanceCents }
+
+      if (primaryDebit != null && primaryCash != null && totalWithdrawalCents > 0L) {
+        val debitBal = currentBalances[primaryDebit.id] ?: 0L
+        val cashBal = currentBalances[primaryCash.id] ?: 0L
+        if (cashBal == 0L && debitBal > 0L) {
+          currentBalances[primaryDebit.id] = debitBal - totalWithdrawalCents
+          currentBalances[primaryCash.id] = cashBal + totalWithdrawalCents
+        } else if (
+          debitBal <= 0L &&
+            nonWithdrawalTxs.isNotEmpty() &&
+            nonWithdrawalTxs.none { it.accountId == primaryDebit.id } &&
+            nonWithdrawalTxs.all { it.accountId == primaryCash.id }
+        ) {
+          val netNonWithdrawalCents =
+            nonWithdrawalTxs.sumOf {
+              if (TransactionTypes.isIncome(it.typeId)) it.amountCents else -it.amountCents
+            }
+          currentBalances[primaryDebit.id] = netNonWithdrawalCents - totalWithdrawalCents
+          currentBalances[primaryCash.id] = totalWithdrawalCents
+        }
+      }
+
+      val latestPeriodKey =
+        allTransactions.maxOfOrNull { it.effectivePeriodKey() } ?: selectedPeriod.key
+      if (selectedPeriod.key >= latestPeriodKey) {
+        return@lazy currentBalances
+      }
+
+      val periodBalances = HashMap(currentBalances)
+      val futureTxs = allTransactions.filter { it.effectivePeriodKey() > selectedPeriod.key }
+      futureTxs
+        .filter { isWithdrawalTransaction(it) }
+        .forEach { tx ->
+          val deltas =
+            com.example.domain.WithdrawalTransferRule.computeAccountBalanceDeltas(
+              tx = tx,
+              classificationsById = classMap,
+              detailsById = detMap,
+              accounts = allAccounts,
+            )
+          deltas.forEach { (accId, delta) ->
+            periodBalances[accId] = (periodBalances[accId] ?: 0L) - delta
+          }
+        }
+      val redirectCashToDebit =
+        primaryDebit != null &&
+          primaryCash != null &&
+          (periodBalances[primaryCash.id] ?: 0L) == 0L
+      futureTxs
+        .filter { !isWithdrawalTransaction(it) }
+        .forEach { tx ->
+          val delta =
+            if (TransactionTypes.isIncome(tx.typeId)) tx.amountCents else -tx.amountCents
+          val targetAccId =
+            if (redirectCashToDebit && tx.accountId == primaryCash!!.id) {
+              primaryDebit!!.id
+            } else {
+              tx.accountId
+            }
+          periodBalances[targetAccId] = (periodBalances[targetAccId] ?: 0L) - delta
+        }
+      periodBalances
     }
 
   fun periodAccountBalanceCents(accountId: String): Long =

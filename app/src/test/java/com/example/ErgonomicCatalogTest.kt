@@ -298,4 +298,124 @@ class ErgonomicCatalogTest {
     assertEquals(1, cashFiltered.periodTransactions.size)
     assertFalse(cashFiltered.periodTransactions.first().isEffectiveOutflow)
   }
+
+  @Test
+  fun withdrawalTransferRule_withAuthoritativeAccountBalances_shows3991DebitAnd2000Cash() {
+    val clsOtroId = "c-otro-ingreso"
+    val clsNominaId = "c-nomina"
+    val clsBebeId = "c-bebe"
+    val detRetiroId = "d-retiro"
+    val detAnticipoId = "d-anticipo"
+    val detFormulaId = "d-formula"
+    val debitId = "c0ffd56e-8ffa-59bf-9d4b-3c07acf21554"
+    val cashId = "adfa1b53-ff67-5615-9d14-ceed4223db9d"
+
+    val classifications =
+      listOf(
+        ClassificationEntity(id = clsOtroId, typeId = TransactionTypes.INGRESO_UUID, name = "Otro", sortOrder = 1),
+        ClassificationEntity(id = clsNominaId, typeId = TransactionTypes.INGRESO_UUID, name = "Nómina", sortOrder = 2),
+        ClassificationEntity(id = clsBebeId, typeId = TransactionTypes.GASTO_UUID, name = "Bebé", sortOrder = 3),
+      )
+    val details =
+      listOf(
+        DetailItemEntity(id = detRetiroId, classificationId = clsOtroId, name = "Retiro", sortOrder = 1),
+        DetailItemEntity(id = detAnticipoId, classificationId = clsNominaId, name = "Anticipo Nómina", sortOrder = 1),
+        DetailItemEntity(id = detFormulaId, classificationId = clsBebeId, name = "Fórmula", sortOrder = 1),
+      )
+
+    // Historical transactions (e.g. imported from Excel with default cashId):
+    // - nov 2026: +3,201.50
+    // - dic 2026: +6,600.00 income - 3,810.50 expense = +2,789.50 (total accumulated = 5,991.00)
+    // - dic 2026: Retiro 2,000.00 (BBVA Débito -> Efectivo)
+    val txs =
+      listOf(
+        FinanceTransactionEntity(
+          id = "tx-nov-net",
+          createdAtMillis = 1000L,
+          operationEpochDay = 20750L,
+          fiscalPeriodKey = "2026-11",
+          fiscalPeriodLabel = "nov 2026",
+          typeId = TransactionTypes.INGRESO_UUID,
+          classificationId = clsNominaId,
+          detailId = detAnticipoId,
+          accountId = cashId,
+          amountCents = 320_150L,
+        ),
+        FinanceTransactionEntity(
+          id = "tx-dic-inc",
+          createdAtMillis = 2000L,
+          operationEpochDay = 20778L,
+          fiscalPeriodKey = "2026-12",
+          fiscalPeriodLabel = "dic 2026",
+          typeId = TransactionTypes.INGRESO_UUID,
+          classificationId = clsNominaId,
+          detailId = detAnticipoId,
+          accountId = cashId,
+          amountCents = 660_000L,
+        ),
+        FinanceTransactionEntity(
+          id = "tx-dic-exp",
+          createdAtMillis = 3000L,
+          operationEpochDay = 20778L,
+          fiscalPeriodKey = "2026-12",
+          fiscalPeriodLabel = "dic 2026",
+          typeId = TransactionTypes.GASTO_UUID,
+          classificationId = clsBebeId,
+          detailId = detFormulaId,
+          accountId = cashId,
+          amountCents = 381_050L,
+        ),
+        FinanceTransactionEntity(
+          id = "tx-dic-retiro",
+          createdAtMillis = 4000L,
+          operationEpochDay = 20778L,
+          fiscalPeriodKey = "2026-12",
+          fiscalPeriodLabel = "dic 2026",
+          typeId = TransactionTypes.INGRESO_UUID,
+          classificationId = clsOtroId,
+          detailId = detRetiroId,
+          accountId = debitId,
+          amountCents = 200_000L,
+        ),
+      )
+
+    // Case A: Backend accounts have BBVA Débito = 3,991.00 and Efectivo = 2,000.00
+    val accountsSynced =
+      listOf(
+        AccountEntity(id = debitId, name = "Tarjeta de Débito (BBVA)", shortLabel = "BBVA Débito", balanceCents = 399_100L, accountKind = "DEBIT", sortOrder = 0),
+        AccountEntity(id = cashId, name = "Efectivo", shortLabel = "Efectivo", balanceCents = 200_000L, accountKind = "CASH", sortOrder = 1),
+      )
+    val dicStateA =
+      FinanceUiState(
+        isLoaded = true,
+        selectedPeriod = com.example.domain.FiscalPeriod(2026, 12),
+        allClassifications = classifications,
+        allDetails = details,
+        allAccounts = accountsSynced,
+        allTransactions = txs,
+      )
+    assertEquals(399_100L, dicStateA.periodAccountBalanceCents(debitId))
+    assertEquals(200_000L, dicStateA.periodAccountBalanceCents(cashId))
+    assertEquals(278_950L, dicStateA.periodNetBalanceCents)
+
+    // Switching back to nov 2026 shows BBVA Débito = 3,201.50 and Efectivo = 0.00
+    val novStateA = dicStateA.copy(selectedPeriod = com.example.domain.FiscalPeriod(2026, 11))
+    assertEquals(320_150L, novStateA.periodAccountBalanceCents(debitId))
+    assertEquals(0L, novStateA.periodAccountBalanceCents(cashId))
+
+    // Switching back to oct 2026 (empty period) shows 0.00 for both
+    val octStateA = dicStateA.copy(selectedPeriod = com.example.domain.FiscalPeriod(2026, 10))
+    assertEquals(0L, octStateA.periodAccountBalanceCents(debitId))
+    assertEquals(0L, octStateA.periodAccountBalanceCents(cashId))
+
+    // Case B: Excel import placed 5,991.00 on CASH and -2,000.00 on DEBIT
+    val accountsFromExcelDefaultCash =
+      listOf(
+        AccountEntity(id = debitId, name = "Tarjeta de Débito (BBVA)", shortLabel = "BBVA Débito", balanceCents = -200_000L, accountKind = "DEBIT", sortOrder = 0),
+        AccountEntity(id = cashId, name = "Efectivo", shortLabel = "Efectivo", balanceCents = 799_100L, accountKind = "CASH", sortOrder = 1),
+      )
+    val dicStateB = dicStateA.copy(allAccounts = accountsFromExcelDefaultCash)
+    assertEquals(399_100L, dicStateB.periodAccountBalanceCents(debitId))
+    assertEquals(200_000L, dicStateB.periodAccountBalanceCents(cashId))
+  }
 }
