@@ -161,10 +161,18 @@ class ErgonomicCatalogTest {
     assertEquals(1, octState.periodTransactions.size)
     assertEquals("tx-oct", octState.periodTransactions.first().entity.id)
     assertEquals(100000L, octState.periodNetBalanceCents)
+    assertEquals(100000L, octState.periodAccountBalanceCents(aId))
 
     val novState = octState.copy(selectedPeriod = com.example.domain.FiscalPeriod(2026, 11))
     assertEquals(1, novState.periodTransactions.size)
     assertEquals("tx-nov", novState.periodTransactions.first().entity.id)
     assertEquals(-35000L, novState.periodNetBalanceCents)
+    assertEquals(-35000L, novState.periodAccountBalanceCents(aId))
+
+    // Transactions from periods strictly earlier than currentFiscalPeriod must be read-only
+    val pastTx = txOct.copy(fiscalPeriodKey = "2020-01")
+    val currentTx = txOct.copy(fiscalPeriodKey = octState.currentFiscalPeriod.key)
+    assertFalse(octState.isTransactionEditable(pastTx))
+    assertTrue(octState.isTransactionEditable(currentTx))
   }
 }

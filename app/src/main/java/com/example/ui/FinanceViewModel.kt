@@ -356,6 +356,39 @@ data class FinanceUiState(
         .sumOf { it.amountCents }
     }
 
+  val currentFiscalPeriod: FiscalPeriod by
+    lazy(LazyThreadSafetyMode.NONE) {
+      FiscalPeriodCalculator.computeFiscalPeriod(FiscalPeriodCalculator.todayEpochDay())
+    }
+
+  /**
+   * True when selectedPeriod is strictly earlier than currentFiscalPeriod (YYYY-MM lexical compare).
+   */
+  val isSelectedPeriodReadOnly: Boolean
+    get() = selectedPeriod.key < currentFiscalPeriod.key
+
+  fun isTransactionEditable(tx: FinanceTransactionEntity): Boolean {
+    return tx.effectivePeriodKey() >= currentFiscalPeriod.key
+  }
+
+  /**
+   * Period-scoped net balance (Ingresos - Gastos) for each account in the selected fiscal period.
+   */
+  val periodAccountBalancesCents: Map<String, Long> by
+    lazy(LazyThreadSafetyMode.NONE) {
+      val map = HashMap<String, Long>()
+      allTransactions
+        .filter { it.effectivePeriodKey() == selectedPeriod.key }
+        .forEach { tx ->
+          val delta = if (TransactionTypes.isIncome(tx.typeId)) tx.amountCents else -tx.amountCents
+          map[tx.accountId] = (map[tx.accountId] ?: 0L) + delta
+        }
+      map
+    }
+
+  fun periodAccountBalanceCents(accountId: String): Long =
+    periodAccountBalancesCents[accountId] ?: 0L
+
   /**
    * Net available balance for the selected fiscal period (Ingresos - Gastos of selectedPeriod),
    * updating dynamically as the user navigates across oct, nov, dic, etc.
@@ -976,6 +1009,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     oldTx: FinanceTransactionEntity,
     newTx: FinanceTransactionEntity,
   ) {
+    if (!uiState.value.isTransactionEditable(oldTx)) {
+      _snackbarMessages.tryEmit("No se permite modificar movimientos de periodos anteriores al actual")
+      return
+    }
     viewModelScope.launch {
       if (!newTx.merchantName.isNullOrBlank()) {
         repository.ensureMerchantExists(newTx.merchantName)
@@ -986,6 +1023,10 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
   }
 
   fun deleteExistingTransaction(tx: FinanceTransactionEntity) {
+    if (!uiState.value.isTransactionEditable(tx)) {
+      _snackbarMessages.tryEmit("No se permite eliminar movimientos de periodos anteriores al actual")
+      return
+    }
     viewModelScope.launch {
       repository.deleteTransaction(tx)
       _snackbarMessages.tryEmit("Movimiento eliminado y saldo ajustado")

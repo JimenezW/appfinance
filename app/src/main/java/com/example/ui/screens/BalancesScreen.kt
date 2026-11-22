@@ -162,6 +162,7 @@ fun BalancesScreen(
             state.activeAccounts.forEach { acc ->
               AccountBalanceTile(
                 account = acc,
+                periodBalanceCents = state.periodAccountBalanceCents(acc.id),
                 selected = state.selectedAccountFilterId == acc.id,
                 onClick = { onToggleAccountFilter(acc.id) },
               )
@@ -435,6 +436,7 @@ private fun HeroTotalBalanceCard(
 @Composable
 private fun AccountBalanceTile(
   account: AccountEntity,
+  periodBalanceCents: Long,
   selected: Boolean,
   onClick: () -> Unit,
 ) {
@@ -473,11 +475,13 @@ private fun AccountBalanceTile(
         overflow = TextOverflow.Ellipsis,
       )
       Text(
-        text = FiscalPeriodCalculator.formatMxn(account.balanceCents),
+        text = FiscalPeriodCalculator.formatMxn(periodBalanceCents),
         fontFamily = MonoFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 15.sp,
-        color = MaterialTheme.colorScheme.onSurface,
+        color =
+          if (periodBalanceCents < 0L) financeColors.expenseAccent
+          else MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
       )
     }
@@ -782,6 +786,8 @@ private fun EditTransactionBottomSheet(
 
   val parsedCents = FiscalPeriodCalculator.parseAmountToCents(amountText)
   val computedPeriod = FiscalPeriodCalculator.computeFiscalPeriod(epochDay)
+  val isEditable = state.isTransactionEditable(item.entity)
+  val financeColors = LocalFinanceColors.current
 
   ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
     Column(
@@ -803,18 +809,49 @@ private fun EditTransactionBottomSheet(
           text = "${item.classificationName} • ${item.detailName}",
           style = MaterialTheme.typography.titleMedium,
         )
-        IconButton(onClick = { confirmDelete = true }) {
-          Icon(
-            imageVector = Icons.Rounded.DeleteOutline,
-            contentDescription = "Eliminar movimiento",
-            tint = MaterialTheme.colorScheme.error,
-          )
+        if (isEditable) {
+          IconButton(onClick = { confirmDelete = true }) {
+            Icon(
+              imageVector = Icons.Rounded.DeleteOutline,
+              contentDescription = "Eliminar movimiento",
+              tint = MaterialTheme.colorScheme.error,
+            )
+          }
+        }
+      }
+
+      if (!isEditable) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = financeColors.pendingContainer,
+          border = BorderStroke(1.dp, financeColors.pendingAccent.copy(alpha = 0.4f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Rounded.WarningAmber,
+              contentDescription = null,
+              tint = financeColors.pendingAccent,
+              modifier = Modifier.size(18.dp),
+            )
+            Text(
+              text =
+                "Periodo cerrado (${item.entity.fiscalPeriodLabel.ifBlank { state.selectedPeriod.label }}): no se permite modificar ni eliminar movimientos de periodos anteriores al actual (${state.currentFiscalPeriod.label}).",
+              style = MaterialTheme.typography.bodySmall,
+              color = financeColors.onPendingContainer,
+            )
+          }
         }
       }
 
       OutlinedTextField(
         value = amountText,
-        onValueChange = { amountText = it },
+        onValueChange = { if (isEditable) amountText = it },
+        enabled = isEditable,
         label = { Text("Importe (MXN)") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
@@ -826,7 +863,8 @@ private fun EditTransactionBottomSheet(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         OutlinedButton(
-          onClick = { showDatePicker = true },
+          onClick = { if (isEditable) showDatePicker = true },
+          enabled = isEditable,
           modifier = Modifier.weight(1f),
           shape = RoundedCornerShape(12.dp),
         ) {
@@ -858,7 +896,7 @@ private fun EditTransactionBottomSheet(
         state.activeAccounts.forEach { acc ->
           val sel = acc.id == selectedAccountId
           Surface(
-            onClick = { selectedAccountId = acc.id },
+            onClick = { if (isEditable) selectedAccountId = acc.id },
             shape = RoundedCornerShape(10.dp),
             color =
               if (sel) MaterialTheme.colorScheme.primaryContainer
@@ -876,7 +914,8 @@ private fun EditTransactionBottomSheet(
 
       OutlinedTextField(
         value = merchantText,
-        onValueChange = { merchantText = it },
+        onValueChange = { if (isEditable) merchantText = it },
+        enabled = isEditable,
         label = { Text("Comercio / Origen") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
@@ -885,34 +924,45 @@ private fun EditTransactionBottomSheet(
 
       OutlinedTextField(
         value = noteText,
-        onValueChange = { noteText = it },
+        onValueChange = { if (isEditable) noteText = it },
+        enabled = isEditable,
         label = { Text("Nota") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
       )
 
-      Button(
-        onClick = {
-          if (parsedCents > 0L) {
-            onSave(
-              item.entity.copy(
-                amountCents = parsedCents,
-                operationEpochDay = epochDay,
-                fiscalPeriodKey = computedPeriod.key,
-                fiscalPeriodLabel = computedPeriod.label,
-                accountId = selectedAccountId,
-                merchantName = merchantText.trim().ifEmpty { null },
-                note = noteText.trim().ifEmpty { null },
+      if (isEditable) {
+        Button(
+          onClick = {
+            if (parsedCents > 0L) {
+              onSave(
+                item.entity.copy(
+                  amountCents = parsedCents,
+                  operationEpochDay = epochDay,
+                  fiscalPeriodKey = computedPeriod.key,
+                  fiscalPeriodLabel = computedPeriod.label,
+                  accountId = selectedAccountId,
+                  merchantName = merchantText.trim().ifEmpty { null },
+                  note = noteText.trim().ifEmpty { null },
+                )
               )
-            )
-          }
-        },
-        enabled = parsedCents > 0L,
-        modifier = Modifier.fillMaxWidth().height(48.dp),
-        shape = RoundedCornerShape(12.dp),
-      ) {
-        Text("Guardar cambios")
+            }
+          },
+          enabled = parsedCents > 0L,
+          modifier = Modifier.fillMaxWidth().height(48.dp),
+          shape = RoundedCornerShape(12.dp),
+        ) {
+          Text("Guardar cambios")
+        }
+      } else {
+        OutlinedButton(
+          onClick = onDismiss,
+          modifier = Modifier.fillMaxWidth().height(48.dp),
+          shape = RoundedCornerShape(12.dp),
+        ) {
+          Text("Cerrar (solo lectura)")
+        }
       }
     }
   }
