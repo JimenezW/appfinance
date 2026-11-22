@@ -125,18 +125,6 @@ fun MisFinanzasApp(
   val snackbarHostState = remember { SnackbarHostState() }
   var minSplashElapsed by remember { mutableStateOf(false) }
 
-  // Request strictly minimal runtime permission: POST_NOTIFICATIONS on Android 13+ (API 33+)
-  val notificationPermissionLauncher =
-    androidx.activity.compose.rememberLauncherForActivityResult(
-      contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted ->
-      if (!granted) {
-        viewModel.notifyMessage(
-          "Notificaciones desactivadas: puedes activarlas en Ajustes para recibir avisos de programados y Wi-Fi"
-        )
-      }
-    }
-
   LaunchedEffect(Unit) {
     delay(950L)
     minSplashElapsed = true
@@ -144,7 +132,16 @@ fun MisFinanzasApp(
       android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
         !com.example.data.notifications.AppNotificationHelper.hasNotificationPermission(context)
     ) {
-      notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+      val activity = context as? android.app.Activity
+      if (activity != null) {
+        runCatching {
+          androidx.core.app.ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+            1001,
+          )
+        }
+      }
     }
   }
 

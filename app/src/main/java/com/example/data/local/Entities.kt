@@ -214,7 +214,7 @@ data class SyncQueueItemEntity(
 data class SyncSettingsEntity(
   @PrimaryKey val id: Int = 1,
   val deviceId: String = "",
-  val apiEndpointUrl: String = "",
+  val apiEndpointUrl: String = DEFAULT_API_BASE_URL,
   val apiAuthToken: String = "",
   val enrollmentToken: String = "",
   val isDeviceEnrolled: Boolean = false,
@@ -225,4 +225,9 @@ data class SyncSettingsEntity(
   val lastAttemptMillis: Long? = null,
   val lastSyncServerMillis: Long = 0L,
   val lastSyncMessage: String? = null,
-)
+) {
+  companion object {
+    const val DEFAULT_API_BASE_URL =
+      "https://precisely-preferences-crew-exhibition.trycloudflare.com"
+  }
+}

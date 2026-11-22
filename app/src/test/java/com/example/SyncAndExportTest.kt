@@ -269,6 +269,7 @@ class SyncAndExportTest {
     assertEquals(SyncPhase.WAITING_WIFI, offlineResult.phase)
 
     // 2. Wi-Fi connected, but API URL blank -> waits for API config
+    repository.saveSyncSettings(SyncSettingsEntity(apiEndpointUrl = "", autoSyncOnWifi = true))
     val noUrlResult = syncManager.syncPendingIfReady(isWifiConnected = true)
     assertEquals(SyncPhase.WAITING_API_CONFIG, noUrlResult.phase)
 

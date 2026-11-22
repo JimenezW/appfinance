@@ -38,9 +38,31 @@ class FinanceRepository(private val dao: FinanceDao) {
     DatabaseSeeder.seedIfEmpty(dao)
     val existingSettings = dao.getSyncSettingsOnce()
     if (existingSettings == null) {
-      dao.upsertSyncSettings(SyncSettingsEntity(deviceId = UUID.randomUUID().toString()))
-    } else if (existingSettings.deviceId.isBlank()) {
-      dao.upsertSyncSettings(existingSettings.copy(deviceId = UUID.randomUUID().toString()))
+      dao.upsertSyncSettings(
+        SyncSettingsEntity(
+          deviceId = UUID.randomUUID().toString(),
+          apiEndpointUrl = SyncSettingsEntity.DEFAULT_API_BASE_URL,
+        )
+      )
+    } else {
+      val needsDeviceId = existingSettings.deviceId.isBlank()
+      val needsDefaultTunnelUrl =
+        existingSettings.apiEndpointUrl.isBlank() ||
+          existingSettings.apiEndpointUrl.contains(
+            "conscious-princess-constitutional-promotions.trycloudflare.com",
+            ignoreCase = true,
+          )
+      if (needsDeviceId || needsDefaultTunnelUrl) {
+        dao.upsertSyncSettings(
+          existingSettings.copy(
+            deviceId =
+              if (needsDeviceId) UUID.randomUUID().toString() else existingSettings.deviceId,
+            apiEndpointUrl =
+              if (needsDefaultTunnelUrl) SyncSettingsEntity.DEFAULT_API_BASE_URL
+              else existingSettings.apiEndpointUrl,
+          )
+        )
+      }
     }
   }
 
