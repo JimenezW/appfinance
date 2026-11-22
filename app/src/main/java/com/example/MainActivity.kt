@@ -73,7 +73,11 @@ class MainActivity : FragmentActivity() {
         }
 
         if (isUnlocked) {
-          MisFinanzasApp()
+          val initialTabExtra =
+            intent?.getStringExtra(
+              com.example.data.notifications.AppNotificationHelper.EXTRA_OPEN_TAB
+            )
+          MisFinanzasApp(initialTabExtra = initialTabExtra)
         } else {
           Surface(modifier = Modifier.fillMaxSize()) {
             Column(
@@ -112,14 +116,45 @@ class MainActivity : FragmentActivity() {
 }
 
 @Composable
-fun MisFinanzasApp(viewModel: FinanceViewModel = viewModel()) {
+fun MisFinanzasApp(
+  initialTabExtra: String? = null,
+  viewModel: FinanceViewModel = viewModel(),
+) {
+  val context = androidx.compose.ui.platform.LocalContext.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val snackbarHostState = remember { SnackbarHostState() }
   var minSplashElapsed by remember { mutableStateOf(false) }
 
+  // Request strictly minimal runtime permission: POST_NOTIFICATIONS on Android 13+ (API 33+)
+  val notificationPermissionLauncher =
+    androidx.activity.compose.rememberLauncherForActivityResult(
+      contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+      if (!granted) {
+        viewModel.notifyMessage(
+          "Notificaciones desactivadas: puedes activarlas en Ajustes para recibir avisos de programados y Wi-Fi"
+        )
+      }
+    }
+
   LaunchedEffect(Unit) {
     delay(950L)
     minSplashElapsed = true
+    if (
+      android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+        !com.example.data.notifications.AppNotificationHelper.hasNotificationPermission(context)
+    ) {
+      notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+  }
+
+  LaunchedEffect(initialTabExtra) {
+    when (initialTabExtra) {
+      com.example.data.notifications.AppNotificationHelper.TAB_PROGRAMADOS ->
+        viewModel.selectTab(MainTab.PROGRAMADOS)
+      com.example.data.notifications.AppNotificationHelper.TAB_ADMIN_SYNC ->
+        viewModel.openAdminSection(AdminSubSection.BACKUP)
+    }
   }
 
   LaunchedEffect(Unit) {
@@ -240,6 +275,7 @@ fun MisFinanzasApp(viewModel: FinanceViewModel = viewModel()) {
                       onSaveMerchant = viewModel::saveMerchant,
                       onDeleteMerchant = viewModel::deleteMerchant,
                       onSaveSyncConfig = viewModel::saveSyncConfig,
+                      onToggleAutoWifiSync = viewModel::toggleAutoWifiSync,
                       onTriggerManualSync = viewModel::triggerManualWifiSync,
                       onTriggerFullHistorySync = viewModel::triggerFullHistorySync,
                       onLoadSyncBatchPreview = viewModel::loadSyncBatchPreviewJson,

@@ -76,6 +76,7 @@ fun AdminScreen(
   onSaveMerchant: (MerchantEntity) -> Unit,
   onDeleteMerchant: (MerchantEntity) -> Unit,
   onSaveSyncConfig: (endpointUrl: String, authToken: String, autoSyncOnWifi: Boolean, deviceLabel: String) -> Unit,
+  onToggleAutoWifiSync: (Boolean) -> Unit = {},
   onTriggerManualSync: () -> Unit,
   onTriggerFullHistorySync: () -> Unit = {},
   onLoadSyncBatchPreview: ((String) -> Unit) -> Unit,
@@ -99,6 +100,7 @@ fun AdminScreen(
           if (section == AdminSubSection.SCHEDULED) onOpenScheduledTab()
           else onSelectSubSection(section)
         },
+        onToggleAutoWifiSync = onToggleAutoWifiSync,
         onTriggerManualSync = onTriggerManualSync,
         onGenerateAdminConfigJson = onGenerateAdminConfigJson,
         onGenerateCapturedDataJson = onGenerateCapturedDataJson,
@@ -155,6 +157,7 @@ fun AdminScreen(
 private fun AdminHubView(
   state: FinanceUiState,
   onOpenSection: (AdminSubSection) -> Unit,
+  onToggleAutoWifiSync: (Boolean) -> Unit,
   onTriggerManualSync: () -> Unit,
   onGenerateAdminConfigJson: () -> String,
   onGenerateCapturedDataJson: () -> String,
@@ -216,6 +219,7 @@ private fun AdminHubView(
     // Compact Wi-Fi Sync & Side-by-Side Manual JSON Export Panel
     item {
       val isWifi = state.wifiState.isWifiConnected
+      val autoWifiEnabled = state.syncSettings.autoSyncOnWifi
       Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -275,6 +279,69 @@ private fun AdminHubView(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
           )
+
+          Surface(
+            onClick = { onToggleAutoWifiSync(!autoWifiEnabled) },
+            shape = RoundedCornerShape(12.dp),
+            color =
+              if (autoWifiEnabled) financeColors.incomeContainer
+              else financeColors.subtleSurface,
+            border =
+              BorderStroke(
+                1.dp,
+                if (autoWifiEnabled) financeColors.incomeAccent.copy(alpha = 0.45f)
+                else financeColors.cardBorder,
+              ),
+            modifier = Modifier.fillMaxWidth().testTag("admin_hub_auto_wifi_sync_btn"),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f),
+              ) {
+                Icon(
+                  imageVector = Icons.Rounded.Wifi,
+                  contentDescription = null,
+                  tint =
+                    if (autoWifiEnabled) financeColors.incomeAccent
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier.size(18.dp),
+                )
+                Column {
+                  Text(
+                    text = "Sincronización automática al detectar Wi-Fi",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color =
+                      if (autoWifiEnabled) financeColors.onIncomeContainer
+                      else MaterialTheme.colorScheme.onSurface,
+                  )
+                  Text(
+                    text =
+                      if (autoWifiEnabled) "Activa • sincroniza y notifica al conectar a Wi-Fi"
+                      else "Inactiva • toca para activar sincronización automática",
+                    style = MaterialTheme.typography.labelSmall,
+                    color =
+                      if (autoWifiEnabled) financeColors.incomeAccent
+                      else MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+              Text(
+                text = if (autoWifiEnabled) "ACTIVO" else "ACTIVAR",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color =
+                  if (autoWifiEnabled) financeColors.incomeAccent
+                  else MaterialTheme.colorScheme.primary,
+              )
+            }
+          }
 
           Row(
             modifier = Modifier.fillMaxWidth(),

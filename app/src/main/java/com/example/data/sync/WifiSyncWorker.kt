@@ -40,7 +40,16 @@ class WifiSyncWorker(
       )
 
     return when (status.phase) {
-      SyncPhase.SYNCED,
+      SyncPhase.SYNCED -> {
+        if (status.lastSentCount > 0 || status.lastPulledCount > 0) {
+          com.example.data.notifications.AppNotificationHelper.notifyWifiSyncCompleted(
+            context = applicationContext,
+            sentCount = status.lastSentCount,
+            pulledCount = status.lastPulledCount,
+          )
+        }
+        Result.success()
+      }
       SyncPhase.IDLE,
       SyncPhase.WAITING_API_CONFIG,
       SyncPhase.REVOKED -> Result.success()

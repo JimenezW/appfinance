@@ -548,9 +548,41 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         initialValue = FinanceUiState(),
       )
 
+  private var lastNotifiedPendingRuleIds: Set<String> = emptySet()
+
   init {
+    com.example.data.notifications.AppNotificationHelper.ensureChannelsCreated(application)
     viewModelScope.launch { repository.ensureSeeded() }
     observeWifiForAutoSync()
+    observePendingScheduledRulesForNotifications()
+  }
+
+  private fun observePendingScheduledRulesForNotifications() {
+    viewModelScope.launch {
+      uiState
+        .distinctUntilChanged { old, new ->
+          old.pendingScheduledRules.map { it.rule.id } ==
+            new.pendingScheduledRules.map { it.rule.id }
+        }
+        .collect { state ->
+          if (!state.isLoaded) return@collect
+          val pending = state.pendingScheduledRules
+          val currentIds = pending.map { it.rule.id }.toSet()
+          val appCtx = getApplication<Application>()
+          if (currentIds.isEmpty()) {
+            lastNotifiedPendingRuleIds = emptySet()
+            com.example.data.notifications.AppNotificationHelper
+              .cancelPendingScheduledRulesNotification(appCtx)
+          } else if (currentIds != lastNotifiedPendingRuleIds) {
+            lastNotifiedPendingRuleIds = currentIds
+            com.example.data.notifications.AppNotificationHelper.notifyPendingScheduledRules(
+              context = appCtx,
+              pendingCount = pending.size,
+              titlesPreview = pending.map { it.rule.title },
+            )
+          }
+        }
+    }
   }
 
   private fun observeWifiForAutoSync() {
@@ -581,7 +613,8 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         }
         .distinctUntilChanged()
         .collect { trigger ->
-          if (trigger.isWifiConnected && !wasWifiConnected) {
+          val justConnectedWifi = trigger.isWifiConnected && !wasWifiConnected
+          if (justConnectedWifi) {
             wifiSessionEpoch++
           }
           wasWifiConnected = trigger.isWifiConnected
@@ -608,17 +641,29 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
             !revoked &&
               trigger.isWifiConnected &&
               trigger.autoSyncOnWifi &&
-              trigger.pendingCount > 0 &&
+              (trigger.pendingCount > 0 || justConnectedWifi) &&
               trigger.apiEndpointUrl.isNotBlank()
           ) {
             val attemptKey =
               "${wifiSessionEpoch}_${trigger.maxQueueId}_${trigger.pendingCount}_${trigger.apiEndpointUrl}"
             if (attemptKey != lastAutoSyncAttemptKey) {
               lastAutoSyncAttemptKey = attemptKey
-              val result = syncManager.syncPendingIfReady(isWifiConnected = true)
-              if (result.phase == SyncPhase.SYNCED && result.lastSentCount > 0) {
-                _snackbarMessages.tryEmit(
-                  "Sincronización Wi-Fi automática: ${result.lastSentCount} registros enviados"
+              val result =
+                syncManager.syncPendingIfReady(
+                  isWifiConnected = true,
+                  pullAfterPush = true,
+                )
+              if (
+                result.phase == SyncPhase.SYNCED &&
+                  (result.lastSentCount > 0 || result.lastPulledCount > 0)
+              ) {
+                val summary =
+                  "Sincronización Wi-Fi automática: ${result.lastSentCount} enviados • ${result.lastPulledCount} descargados"
+                _snackbarMessages.tryEmit(summary)
+                com.example.data.notifications.AppNotificationHelper.notifyWifiSyncCompleted(
+                  context = appCtx,
+                  sentCount = result.lastSentCount,
+                  pulledCount = result.lastPulledCount,
                 )
               }
             }
@@ -1157,6 +1202,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         )
       repository.saveSyncSettings(updated)
       _snackbarMessages.tryEmit("Configuración de sincronización guardada")
+    }
+  }
+
+  fun toggleAutoWifiSync(enabled: Boolean) {
+    viewModelScope.launch {
+      val current = uiState.value.syncSettings
+      repository.saveSyncSettings(current.copy(autoSyncOnWifi = enabled))
+      _snackbarMessages.tryEmit(
+        if (enabled) "Sincronización automática por Wi-Fi activada"
+        else "Sincronización automática por Wi-Fi desactivada"
+      )
+      if (enabled && connectivityMonitor.connectivityState.value.isWifiConnected) {
+        triggerManualWifiSync()
+      }
     }
   }
 
