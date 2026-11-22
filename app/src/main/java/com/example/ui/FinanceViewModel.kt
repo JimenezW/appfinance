@@ -82,6 +82,8 @@ data class TransactionDisplay(
   val detailName: String,
   val accountName: String,
   val accountShortLabel: String,
+  val isWithdrawalTransfer: Boolean = false,
+  val isEffectiveOutflow: Boolean = TransactionTypes.isExpense(entity.typeId),
 )
 
 data class PendingRuleDisplay(
@@ -304,6 +306,28 @@ data class FinanceUiState(
     else FiscalPeriodCalculator.computeFiscalPeriod(operationEpochDay).key
   }
 
+  fun isWithdrawalTransaction(tx: FinanceTransactionEntity): Boolean {
+    return com.example.domain.WithdrawalTransferRule.isWithdrawalTransaction(
+      tx = tx,
+      classificationsById = classificationsById,
+      detailsById = detailsById,
+    )
+  }
+
+  private fun transactionTouchesSelectedAccount(tx: FinanceTransactionEntity): Boolean {
+    val filterAccId = selectedAccountFilterId ?: return true
+    if (tx.accountId == filterAccId) return true
+    if (isWithdrawalTransaction(tx)) {
+      val resolved =
+        com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
+          selectedAccountId = tx.accountId,
+          accounts = allAccounts,
+        )
+      return resolved?.debitAccountId == filterAccId || resolved?.cashAccountId == filterAccId
+    }
+    return false
+  }
+
   val periodTransactions: List<TransactionDisplay> by
     lazy(LazyThreadSafetyMode.NONE) {
       val classMap = classificationsById
@@ -312,14 +336,38 @@ data class FinanceUiState(
       val query = searchQuery.trim().lowercase()
       allTransactions
         .filter { it.effectivePeriodKey() == selectedPeriod.key }
-        .filter { selectedAccountFilterId == null || it.accountId == selectedAccountFilterId }
+        .filter { transactionTouchesSelectedAccount(it) }
         .map { tx ->
+          val isWithdrawal = isWithdrawalTransaction(tx)
+          val resolved =
+            if (isWithdrawal) {
+              com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
+                selectedAccountId = tx.accountId,
+                accounts = allAccounts,
+              )
+            } else null
+          val shortLabel =
+            if (resolved != null) {
+              val debitLbl = accMap[resolved.debitAccountId]?.shortLabel ?: "Débito"
+              val cashLbl = accMap[resolved.cashAccountId]?.shortLabel ?: "Efectivo"
+              "$debitLbl → $cashLbl"
+            } else {
+              accMap[tx.accountId]?.shortLabel ?: "Cuenta"
+            }
+          val isOutflow =
+            if (isWithdrawal) {
+              selectedAccountFilterId != null && selectedAccountFilterId == resolved?.debitAccountId
+            } else {
+              TransactionTypes.isExpense(tx.typeId)
+            }
           TransactionDisplay(
             entity = tx,
             classificationName = classMap[tx.classificationId]?.name ?: "Sin clasificación",
             detailName = detMap[tx.detailId]?.name ?: "Sin detalle",
             accountName = accMap[tx.accountId]?.name ?: "Cuenta",
-            accountShortLabel = accMap[tx.accountId]?.shortLabel ?: "Cuenta",
+            accountShortLabel = shortLabel,
+            isWithdrawalTransfer = isWithdrawal,
+            isEffectiveOutflow = isOutflow,
           )
         }
         .filter { d ->
@@ -328,19 +376,24 @@ data class FinanceUiState(
             d.classificationName.lowercase().contains(query) ||
               d.detailName.lowercase().contains(query) ||
               d.accountName.lowercase().contains(query) ||
+              d.accountShortLabel.lowercase().contains(query) ||
               (d.entity.merchantName?.lowercase()?.contains(query) == true) ||
               (d.entity.note?.lowercase()?.contains(query) == true)
           }
         }
     }
 
+  /**
+   * Real income of the selected fiscal period, excluding internal withdrawals (Ingreso -> Otro -> Retiro).
+   */
   val periodIncomeCents: Long by
     lazy(LazyThreadSafetyMode.NONE) {
       allTransactions
         .filter {
           it.effectivePeriodKey() == selectedPeriod.key &&
             (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
-            TransactionTypes.isIncome(it.typeId)
+            TransactionTypes.isIncome(it.typeId) &&
+            !isWithdrawalTransaction(it)
         }
         .sumOf { it.amountCents }
     }
@@ -372,16 +425,27 @@ data class FinanceUiState(
   }
 
   /**
-   * Period-scoped net balance (Ingresos - Gastos) for each account in the selected fiscal period.
+   * Period-scoped net balance for each account in the selected fiscal period,
+   * applying the WithdrawalTransferRule (DEBIT -monto, CASH +monto) on Ingreso -> Otro -> Retiro.
    */
   val periodAccountBalancesCents: Map<String, Long> by
     lazy(LazyThreadSafetyMode.NONE) {
       val map = HashMap<String, Long>()
+      val classMap = classificationsById
+      val detMap = detailsById
       allTransactions
         .filter { it.effectivePeriodKey() == selectedPeriod.key }
         .forEach { tx ->
-          val delta = if (TransactionTypes.isIncome(tx.typeId)) tx.amountCents else -tx.amountCents
-          map[tx.accountId] = (map[tx.accountId] ?: 0L) + delta
+          val deltas =
+            com.example.domain.WithdrawalTransferRule.computeAccountBalanceDeltas(
+              tx = tx,
+              classificationsById = classMap,
+              detailsById = detMap,
+              accounts = allAccounts,
+            )
+          deltas.forEach { (accId, delta) ->
+            map[accId] = (map[accId] ?: 0L) + delta
+          }
         }
       map
     }
@@ -390,11 +454,21 @@ data class FinanceUiState(
     periodAccountBalancesCents[accountId] ?: 0L
 
   /**
-   * Net available balance for the selected fiscal period (Ingresos - Gastos of selectedPeriod),
-   * updating dynamically as the user navigates across oct, nov, dic, etc.
+   * Net available balance for the selected fiscal period:
+   * - When a specific account filter is selected, reflects that account's period balance
+   *   (including any internal withdrawal transfers into CASH or out of DEBIT).
+   * - When no account filter is selected, reflects netCashFlowCents (periodIncomeCents - periodExpenseCents),
+   *   where internal withdrawals cancel out (-monto + monto = 0).
    */
   val periodNetBalanceCents: Long by
-    lazy(LazyThreadSafetyMode.NONE) { periodIncomeCents - periodExpenseCents }
+    lazy(LazyThreadSafetyMode.NONE) {
+      val filterAccId = selectedAccountFilterId
+      if (filterAccId != null) {
+        periodAccountBalanceCents(filterAccId)
+      } else {
+        periodIncomeCents - periodExpenseCents
+      }
+    }
 
   val expenseBreakdown: List<CategoryStat> by
     lazy(LazyThreadSafetyMode.NONE) { buildBreakdown(TransactionTypes.GASTO_UUID, periodExpenseCents) }
@@ -413,7 +487,8 @@ data class FinanceUiState(
         .filter {
           it.effectivePeriodKey() == selectedPeriod.key &&
             (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
-            TransactionTypes.codeFor(it.typeId) == targetCode
+            TransactionTypes.codeFor(it.typeId) == targetCode &&
+            !isWithdrawalTransaction(it)
         }
         .groupBy { it.classificationId }
     return grouped
@@ -860,6 +935,26 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     val now = System.currentTimeMillis()
     val resolvedTypeId = TransactionTypes.uuidForCode(TransactionTypes.codeFor(state.capture.typeId))
 
+    val isWithdrawal =
+      com.example.domain.WithdrawalTransferRule.isWithdrawalHierarchy(
+        typeId = resolvedTypeId,
+        classificationName = state.classificationsById[classId]?.name,
+        detailName = state.detailsById[detailId]?.name,
+      )
+    if (isWithdrawal) {
+      val resolvedAccounts =
+        com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
+          selectedAccountId = accountId,
+          accounts = state.allAccounts,
+        )
+      if (resolvedAccounts == null) {
+        _snackbarMessages.tryEmit(
+          "Cuenta inválida para Retiro: selecciona una cuenta de Débito o Efectivo"
+        )
+        return
+      }
+    }
+
     val tx =
       FinanceTransactionEntity(
         id = UUID.randomUUID().toString(),
@@ -884,9 +979,15 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         repository.ensureMerchantExists(merchant)
       }
       repository.recordTransaction(tx)
-      val prefix = if (TransactionTypes.isExpense(tx.typeId)) "Gasto" else "Ingreso"
       val formatted = FiscalPeriodCalculator.formatMxn(amountCents)
-      _snackbarMessages.tryEmit("$prefix guardado ($formatted • ${fiscalPeriod.label})")
+      val message =
+        if (isWithdrawal) {
+          "Retiro registrado ($formatted • Débito → Efectivo • ${fiscalPeriod.label})"
+        } else {
+          val prefix = if (TransactionTypes.isExpense(tx.typeId)) "Gasto" else "Ingreso"
+          "$prefix guardado ($formatted • ${fiscalPeriod.label})"
+        }
+      _snackbarMessages.tryEmit(message)
       captureForm.update {
         it.copy(amountInput = "", merchantName = "", note = "", showNoteField = false)
       }
@@ -1009,9 +1110,23 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     oldTx: FinanceTransactionEntity,
     newTx: FinanceTransactionEntity,
   ) {
-    if (!uiState.value.isTransactionEditable(oldTx)) {
+    val state = uiState.value
+    if (!state.isTransactionEditable(oldTx)) {
       _snackbarMessages.tryEmit("No se permite modificar movimientos de periodos anteriores al actual")
       return
+    }
+    if (state.isWithdrawalTransaction(newTx)) {
+      val resolved =
+        com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
+          selectedAccountId = newTx.accountId,
+          accounts = state.allAccounts,
+        )
+      if (resolved == null) {
+        _snackbarMessages.tryEmit(
+          "Cuenta inválida para Retiro: selecciona una cuenta de Débito o Efectivo"
+        )
+        return
+      }
     }
     viewModelScope.launch {
       if (!newTx.merchantName.isNullOrBlank()) {

@@ -685,7 +685,7 @@ private fun TransactionRowCard(
   onClick: () -> Unit,
 ) {
   val financeColors = LocalFinanceColors.current
-  val isExpense = TransactionTypes.isExpense(item.entity.typeId)
+  val isExpense = item.isEffectiveOutflow
   val amountColor = if (isExpense) financeColors.expenseAccent else financeColors.incomeAccent
   val subtitleParts = buildList {
     if (!item.entity.merchantName.isNullOrBlank()) add(item.entity.merchantName)

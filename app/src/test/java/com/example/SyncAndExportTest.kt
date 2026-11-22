@@ -413,6 +413,6 @@ class SyncAndExportTest {
     assertEquals(6, result.lastPulledCount)
     assertEquals(1, repository.transactions.first().size)
     assertEquals(14, repository.classifications.first().size)
-    assertEquals(65, repository.details.first().size)
+    assertEquals(66, repository.details.first().size)
   }
 }

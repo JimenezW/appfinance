@@ -233,18 +233,60 @@ interface FinanceDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertSyncSettings(settings: SyncSettingsEntity)
 
+  @Query("SELECT name FROM classifications WHERE id = :id LIMIT 1")
+  suspend fun getClassificationNameById(id: String): String?
+
+  @Query("SELECT name FROM detail_items WHERE id = :id LIMIT 1")
+  suspend fun getDetailNameById(id: String): String?
+
+  @Query("SELECT * FROM accounts WHERE deletedAtMillis IS NULL ORDER BY sortOrder ASC, name ASC")
+  suspend fun getAllAccountsOnce(): List<AccountEntity>
+
   private suspend fun isIncomeType(typeId: String): Boolean {
     val dbCode = getTransactionTypeCodeById(typeId)
     return if (dbCode != null) dbCode.equals(TransactionTypes.INGRESO, ignoreCase = true)
     else TransactionTypes.isIncome(typeId)
   }
 
+  private suspend fun computeBalanceDeltasForTx(tx: FinanceTransactionEntity): Map<String, Long> {
+    val isInc = isIncomeType(tx.typeId)
+    if (isInc) {
+      val clsName = getClassificationNameById(tx.classificationId)
+      val detName = getDetailNameById(tx.detailId)
+      if (
+        com.example.domain.WithdrawalTransferRule.isWithdrawalHierarchy(
+          typeId = TransactionTypes.INGRESO_UUID,
+          classificationName = clsName,
+          detailName = detName,
+        )
+      ) {
+        val accounts = getAllAccountsOnce()
+        val resolved =
+          com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
+            selectedAccountId = tx.accountId,
+            accounts = accounts,
+          )
+        if (resolved != null) {
+          return if (resolved.debitAccountId == resolved.cashAccountId) emptyMap()
+          else
+            mapOf(
+              resolved.debitAccountId to -tx.amountCents,
+              resolved.cashAccountId to tx.amountCents,
+            )
+        }
+      }
+    }
+    val delta = if (isInc) tx.amountCents else -tx.amountCents
+    return mapOf(tx.accountId to delta)
+  }
+
   // --- Atomic Operations ---
   @Transaction
   suspend fun insertTransactionAndUpdateBalance(tx: FinanceTransactionEntity) {
     insertTransactionRaw(tx)
-    val delta = if (isIncomeType(tx.typeId)) tx.amountCents else -tx.amountCents
-    adjustAccountBalance(tx.accountId, delta)
+    computeBalanceDeltasForTx(tx).forEach { (accId, delta) ->
+      adjustAccountBalance(accId, delta)
+    }
   }
 
   @Transaction
@@ -252,11 +294,13 @@ interface FinanceDao {
     oldTx: FinanceTransactionEntity,
     newTx: FinanceTransactionEntity,
   ) {
-    val reverseOld = if (isIncomeType(oldTx.typeId)) -oldTx.amountCents else oldTx.amountCents
-    adjustAccountBalance(oldTx.accountId, reverseOld)
+    computeBalanceDeltasForTx(oldTx).forEach { (accId, delta) ->
+      adjustAccountBalance(accId, -delta)
+    }
     updateTransactionRaw(newTx)
-    val applyNew = if (isIncomeType(newTx.typeId)) newTx.amountCents else -newTx.amountCents
-    adjustAccountBalance(newTx.accountId, applyNew)
+    computeBalanceDeltasForTx(newTx).forEach { (accId, delta) ->
+      adjustAccountBalance(accId, delta)
+    }
   }
 
   @Transaction
@@ -264,8 +308,9 @@ interface FinanceDao {
     tx: FinanceTransactionEntity,
     deletedAtMillis: Long = System.currentTimeMillis(),
   ) {
-    val reverse = if (isIncomeType(tx.typeId)) -tx.amountCents else tx.amountCents
-    adjustAccountBalance(tx.accountId, reverse)
+    computeBalanceDeltasForTx(tx).forEach { (accId, delta) ->
+      adjustAccountBalance(accId, -delta)
+    }
     softDeleteTransactionRaw(tx.id, deletedAtMillis)
   }
 
