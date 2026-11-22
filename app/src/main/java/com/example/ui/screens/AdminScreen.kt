@@ -164,38 +164,9 @@ private fun AdminHubView(
   onNotify: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val context = LocalContext.current
   val financeColors = LocalFinanceColors.current
   val gastoCount = state.allClassifications.count { TransactionTypes.isExpense(it.typeId) && it.isActive }
   val ingresoCount = state.allClassifications.count { TransactionTypes.isIncome(it.typeId) && it.isActive }
-  var previewTitle by remember { mutableStateOf<String?>(null) }
-  var previewContent by remember { mutableStateOf("") }
-
-  val adminJsonLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-      if (uri != null) {
-        runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { stream ->
-              stream.write(onGenerateAdminConfigJson().toByteArray(Charsets.UTF_8))
-            }
-          }
-          .onSuccess { onNotify("JSON de configuración Admin exportado") }
-          .onFailure { onNotify("No se pudo guardar el JSON de Admin") }
-      }
-    }
-
-  val capturedJsonLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-      if (uri != null) {
-        runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { stream ->
-              stream.write(onGenerateCapturedDataJson().toByteArray(Charsets.UTF_8))
-            }
-          }
-          .onSuccess { onNotify("JSON de data capturada exportado") }
-          .onFailure { onNotify("No se pudo guardar el JSON de captura") }
-      }
-    }
 
   LazyColumn(
     modifier = modifier.fillMaxSize(),
@@ -209,14 +180,14 @@ private fun AdminHubView(
           style = MaterialTheme.typography.titleLarge,
         )
         Text(
-          text = "Catálogos organizados, sincronización Wi-Fi y extracción JSON",
+          text = "Catálogos organizados y sincronización Wi-Fi",
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
     }
 
-    // Compact Wi-Fi Sync & Side-by-Side Manual JSON Export Panel
+    // Compact Wi-Fi Sync Panel
     item {
       val isWifi = state.wifiState.isWifiConnected
       val autoWifiEnabled = state.syncSettings.autoSyncOnWifi
@@ -368,49 +339,6 @@ private fun AdminHubView(
               Text("Configurar API", style = MaterialTheme.typography.labelMedium, maxLines = 1)
             }
           }
-
-          Box(
-            modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 2.dp),
-          )
-
-          Text(
-            text = "Exportar JSON manual (base para API)",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-          )
-
-          Row(
-            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            CompactJsonExportTile(
-              title = "Admin (JSON)",
-              subtitle = "Catálogos y reglas",
-              isPrimary = true,
-              exportTag = "admin_hub_export_admin_json_btn",
-              previewTag = "admin_hub_preview_admin_json_btn",
-              onExport = { adminJsonLauncher.launch("mis_finanzas_admin_config.json") },
-              onPreview = {
-                previewTitle = "JSON Configuración Admin"
-                previewContent = onGenerateAdminConfigJson()
-              },
-              modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-            CompactJsonExportTile(
-              title = "Captura (JSON)",
-              subtitle = "${state.allTransactions.size} movimientos",
-              isPrimary = false,
-              exportTag = "admin_hub_export_captured_json_btn",
-              previewTag = "admin_hub_preview_captured_json_btn",
-              onExport = { capturedJsonLauncher.launch("mis_finanzas_data_capturada.json") },
-              onPreview = {
-                previewTitle = "JSON Data Capturada"
-                previewContent = onGenerateCapturedDataJson()
-              },
-              modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
-          }
         }
       }
     }
@@ -530,103 +458,6 @@ private fun AdminHubView(
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
           )
-        }
-      }
-    }
-  }
-
-  previewTitle?.let { title ->
-    JsonPreviewDialog(
-      title = title,
-      jsonContent = previewContent,
-      onDismiss = { previewTitle = null },
-      onNotify = onNotify,
-    )
-  }
-}
-
-@Composable
-private fun CompactJsonExportTile(
-  title: String,
-  subtitle: String,
-  isPrimary: Boolean,
-  exportTag: String,
-  previewTag: String,
-  onExport: () -> Unit,
-  onPreview: () -> Unit,
-  modifier: Modifier = Modifier,
-) {
-  val financeColors = LocalFinanceColors.current
-  Surface(
-    shape = RoundedCornerShape(12.dp),
-    color = financeColors.subtleSurface,
-    border = BorderStroke(1.dp, financeColors.cardBorder),
-    modifier = modifier,
-  ) {
-    Column(
-      modifier = Modifier.padding(10.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Column {
-        Text(
-          text = title,
-          style = MaterialTheme.typography.labelLarge,
-          fontWeight = FontWeight.Bold,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-          text = subtitle,
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-      }
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        if (isPrimary) {
-          Button(
-            onClick = onExport,
-            modifier = Modifier.weight(1f).height(48.dp).testTag(exportTag),
-            shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp),
-          ) {
-            Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Exportar", style = MaterialTheme.typography.labelMedium, maxLines = 1)
-          }
-        } else {
-          OutlinedButton(
-            onClick = onExport,
-            modifier = Modifier.weight(1f).height(48.dp).testTag(exportTag),
-            shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp),
-          ) {
-            Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Exportar", style = MaterialTheme.typography.labelMedium, maxLines = 1)
-          }
-        }
-
-        Surface(
-          onClick = onPreview,
-          modifier = Modifier.size(48.dp).testTag(previewTag),
-          shape = RoundedCornerShape(10.dp),
-          color = MaterialTheme.colorScheme.surface,
-          border = BorderStroke(1.dp, financeColors.cardBorder),
-        ) {
-          Box(contentAlignment = Alignment.Center) {
-            Icon(
-              imageVector = Icons.Rounded.Code,
-              contentDescription = "Ver JSON de $title",
-              tint = MaterialTheme.colorScheme.primary,
-              modifier = Modifier.size(18.dp),
-            )
-          }
         }
       }
     }
