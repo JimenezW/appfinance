@@ -116,4 +116,55 @@ class ErgonomicCatalogTest {
     assertTrue(json.getBoolean("isPinned"))
     assertFalse(json.getBoolean("default"))
   }
+
+  @Test
+  fun periodFilteringAndNetBalance_updatesDynamicallyWhenSelectedPeriodChanges() {
+    val cId = "11111111-1111-4111-8111-111111111111"
+    val dId = "10101010-1010-4010-8010-101010101010"
+    val aId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+
+    // Oct 2026 tx (with explicit fiscalPeriodKey)
+    val txOct =
+      FinanceTransactionEntity(
+        id = "tx-oct",
+        createdAtMillis = 1000L,
+        operationEpochDay = 20736L, // 10/10/2026 -> 2026-10
+        fiscalPeriodKey = "2026-10",
+        fiscalPeriodLabel = "oct 2026",
+        typeId = TransactionTypes.INGRESO_UUID,
+        classificationId = cId,
+        detailId = dId,
+        accountId = aId,
+        amountCents = 100000L,
+      )
+    // Nov 2026 tx (with blank fiscalPeriodKey to verify fallback from operationEpochDay 16/10/2026 -> 2026-11)
+    val txNovExpense =
+      FinanceTransactionEntity(
+        id = "tx-nov",
+        createdAtMillis = 2000L,
+        operationEpochDay = com.example.domain.FiscalPeriodCalculator.ymdToEpochDay(2026, 10, 16),
+        fiscalPeriodKey = "",
+        fiscalPeriodLabel = "",
+        typeId = TransactionTypes.GASTO_UUID,
+        classificationId = cId,
+        detailId = dId,
+        accountId = aId,
+        amountCents = 35000L,
+      )
+
+    val octState =
+      FinanceUiState(
+        isLoaded = true,
+        selectedPeriod = com.example.domain.FiscalPeriod(2026, 10),
+        allTransactions = listOf(txOct, txNovExpense),
+      )
+    assertEquals(1, octState.periodTransactions.size)
+    assertEquals("tx-oct", octState.periodTransactions.first().entity.id)
+    assertEquals(100000L, octState.periodNetBalanceCents)
+
+    val novState = octState.copy(selectedPeriod = com.example.domain.FiscalPeriod(2026, 11))
+    assertEquals(1, novState.periodTransactions.size)
+    assertEquals("tx-nov", novState.periodTransactions.first().entity.id)
+    assertEquals(-35000L, novState.periodNetBalanceCents)
+  }
 }

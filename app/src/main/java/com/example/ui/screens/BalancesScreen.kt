@@ -96,6 +96,10 @@ fun BalancesScreen(
   var showAllBreakdown by remember { mutableStateOf(false) }
   var showSearchBar by remember { mutableStateOf(false) }
   var editingItem by remember { mutableStateOf<TransactionDisplay?>(null) }
+  var visibleMovementsCount by
+    remember(state.selectedPeriod.key, state.selectedAccountFilterId, state.searchQuery) {
+      mutableStateOf(5)
+    }
 
   Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
@@ -123,10 +127,11 @@ fun BalancesScreen(
         }
       }
 
-      // Hero Total Balance Card
+      // Hero Total Balance Card (updates dynamically with selectedPeriod)
       item {
         HeroTotalBalanceCard(
-          totalBalanceCents = state.totalBalanceCents,
+          periodNetBalanceCents = state.periodNetBalanceCents,
+          totalAvailableCents = state.totalBalanceCents,
           periodIncomeCents = state.periodIncomeCents,
           periodExpenseCents = state.periodExpenseCents,
           periodLabel = state.selectedPeriod.label,
@@ -178,6 +183,8 @@ fun BalancesScreen(
 
       // Recent Movements Header + Search Toggle
       item {
+        val totalInPeriod = state.periodTransactions.size
+        val shownCount = minOf(visibleMovementsCount, totalInPeriod)
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -185,7 +192,12 @@ fun BalancesScreen(
             verticalAlignment = Alignment.CenterVertically,
           ) {
             Text(
-              text = "Últimos Movimientos (${state.periodTransactions.size})",
+              text =
+                if (totalInPeriod > 0) {
+                  "Movimientos de ${state.selectedPeriod.label} ($shownCount de $totalInPeriod)"
+                } else {
+                  "Movimientos de ${state.selectedPeriod.label} (0)"
+                },
               style = MaterialTheme.typography.titleSmall,
             )
             IconButton(
@@ -247,8 +259,26 @@ fun BalancesScreen(
           }
         }
       } else {
-        items(state.periodTransactions, key = { it.entity.id }) { item ->
+        val visibleItems = state.periodTransactions.take(visibleMovementsCount)
+        items(visibleItems, key = { it.entity.id }) { item ->
           TransactionRowCard(item = item, onClick = { editingItem = item })
+        }
+
+        if (state.periodTransactions.size > visibleMovementsCount) {
+          val remaining = state.periodTransactions.size - visibleMovementsCount
+          val nextBatch = minOf(5, remaining)
+          item(key = "load_more_movements_btn") {
+            OutlinedButton(
+              onClick = { visibleMovementsCount += 5 },
+              modifier = Modifier.fillMaxWidth().height(46.dp).testTag("load_more_movements_btn"),
+              shape = RoundedCornerShape(12.dp),
+            ) {
+              Text(
+                text = "Ver más (+$nextBatch movimientos • quedan $remaining)",
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+          }
         }
       }
     }
@@ -331,7 +361,8 @@ private fun FiscalPeriodSelectorPill(
 
 @Composable
 private fun HeroTotalBalanceCard(
-  totalBalanceCents: Long,
+  periodNetBalanceCents: Long,
+  totalAvailableCents: Long,
   periodIncomeCents: Long,
   periodExpenseCents: Long,
   periodLabel: String,
@@ -346,18 +377,29 @@ private fun HeroTotalBalanceCard(
       modifier = Modifier.padding(18.dp),
       verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = "SALDO DISPONIBLE (${periodLabel.uppercase()})",
+          style = MaterialTheme.typography.labelSmall,
+          color = Color(0xFFA7F3D0),
+          fontWeight = FontWeight.Bold,
+        )
+        Text(
+          text = "Acumulado cuentas: ${FiscalPeriodCalculator.formatMxn(totalAvailableCents)}",
+          style = MaterialTheme.typography.labelSmall,
+          color = Color.White.copy(alpha = 0.78f),
+        )
+      }
       Text(
-        text = "SALDO TOTAL DISPONIBLE",
-        style = MaterialTheme.typography.labelSmall,
-        color = Color(0xFFA7F3D0),
-        fontWeight = FontWeight.Bold,
-      )
-      Text(
-        text = FiscalPeriodCalculator.formatMxn(totalBalanceCents),
+        text = FiscalPeriodCalculator.formatMxn(periodNetBalanceCents),
         fontFamily = MonoFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 30.sp,
-        color = Color.White,
+        color = if (periodNetBalanceCents < 0L) Color(0xFFFECACA) else Color.White,
       )
       Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),

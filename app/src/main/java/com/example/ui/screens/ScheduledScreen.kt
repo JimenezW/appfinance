@@ -236,7 +236,7 @@ fun ScheduledScreen(
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-          text = "+ Nueva Regla Recurrente",
+          text = "Nueva Regla Recurrente",
           color = financeColors.incomeAccent,
           fontWeight = FontWeight.Bold,
         )

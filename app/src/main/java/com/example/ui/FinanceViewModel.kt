@@ -298,6 +298,12 @@ data class FinanceUiState(
   val accountsById: Map<String, AccountEntity> by
     lazy(LazyThreadSafetyMode.NONE) { allAccounts.associateBy { it.id } }
 
+  private fun FinanceTransactionEntity.effectivePeriodKey(): String {
+    val trimmed = fiscalPeriodKey.trim()
+    return if (trimmed.isNotEmpty()) trimmed
+    else FiscalPeriodCalculator.computeFiscalPeriod(operationEpochDay).key
+  }
+
   val periodTransactions: List<TransactionDisplay> by
     lazy(LazyThreadSafetyMode.NONE) {
       val classMap = classificationsById
@@ -305,7 +311,7 @@ data class FinanceUiState(
       val accMap = accountsById
       val query = searchQuery.trim().lowercase()
       allTransactions
-        .filter { it.fiscalPeriodKey == selectedPeriod.key }
+        .filter { it.effectivePeriodKey() == selectedPeriod.key }
         .filter { selectedAccountFilterId == null || it.accountId == selectedAccountFilterId }
         .map { tx ->
           TransactionDisplay(
@@ -331,16 +337,31 @@ data class FinanceUiState(
   val periodIncomeCents: Long by
     lazy(LazyThreadSafetyMode.NONE) {
       allTransactions
-        .filter { it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.isIncome(it.typeId) }
+        .filter {
+          it.effectivePeriodKey() == selectedPeriod.key &&
+            (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
+            TransactionTypes.isIncome(it.typeId)
+        }
         .sumOf { it.amountCents }
     }
 
   val periodExpenseCents: Long by
     lazy(LazyThreadSafetyMode.NONE) {
       allTransactions
-        .filter { it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.isExpense(it.typeId) }
+        .filter {
+          it.effectivePeriodKey() == selectedPeriod.key &&
+            (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
+            TransactionTypes.isExpense(it.typeId)
+        }
         .sumOf { it.amountCents }
     }
+
+  /**
+   * Net available balance for the selected fiscal period (Ingresos - Gastos of selectedPeriod),
+   * updating dynamically as the user navigates across oct, nov, dic, etc.
+   */
+  val periodNetBalanceCents: Long by
+    lazy(LazyThreadSafetyMode.NONE) { periodIncomeCents - periodExpenseCents }
 
   val expenseBreakdown: List<CategoryStat> by
     lazy(LazyThreadSafetyMode.NONE) { buildBreakdown(TransactionTypes.GASTO_UUID, periodExpenseCents) }
@@ -357,7 +378,9 @@ data class FinanceUiState(
     val grouped =
       allTransactions
         .filter {
-          it.fiscalPeriodKey == selectedPeriod.key && TransactionTypes.codeFor(it.typeId) == targetCode
+          it.effectivePeriodKey() == selectedPeriod.key &&
+            (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
+            TransactionTypes.codeFor(it.typeId) == targetCode
         }
         .groupBy { it.classificationId }
     return grouped

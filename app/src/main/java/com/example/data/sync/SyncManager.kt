@@ -570,13 +570,21 @@ class SyncManager(
       for (i in 0 until arr.length()) {
         val o = arr.optJSONObject(i) ?: continue
         val updated = o.optLong("updatedAtMillis", now)
+        val opEpochDay = o.optLong("operationEpochDay")
+        val computedPeriod = com.example.domain.FiscalPeriodCalculator.computeFiscalPeriod(opEpochDay)
+        val periodKey =
+          o.optString("fiscalPeriodKey").trim().ifBlank { computedPeriod.key }
+        val periodLabel =
+          o.optString("fiscalPeriodLabel").trim().ifBlank {
+            com.example.domain.FiscalPeriod.fromKey(periodKey)?.label ?: computedPeriod.label
+          }
         transactionsList.add(
           FinanceTransactionEntity(
             id = o.getString("id"),
             createdAtMillis = o.optLong("createdAtMillis", updated),
-            operationEpochDay = o.optLong("operationEpochDay"),
-            fiscalPeriodKey = o.optString("fiscalPeriodKey"),
-            fiscalPeriodLabel = o.optString("fiscalPeriodLabel"),
+            operationEpochDay = opEpochDay,
+            fiscalPeriodKey = periodKey,
+            fiscalPeriodLabel = periodLabel,
             typeId = o.getString("typeId"),
             classificationId = o.getString("classificationId"),
             detailId = o.getString("detailId"),
