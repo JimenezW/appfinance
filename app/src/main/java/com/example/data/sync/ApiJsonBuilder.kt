@@ -111,6 +111,36 @@ object ApiJsonBuilder {
       put("default", rule.isDefault)
     }
 
+  fun budgetToJson(budget: com.example.data.local.BudgetEntity): JSONObject =
+    JSONObject().apply {
+      put("id", budget.id)
+      put("fiscalPeriodKey", budget.fiscalPeriodKey)
+      put("expectedIncomeCents", budget.expectedIncomeCents ?: JSONObject.NULL)
+      put("savingsGoalCents", budget.savingsGoalCents ?: JSONObject.NULL)
+      put("globalExpenseLimitCents", budget.globalExpenseLimitCents ?: JSONObject.NULL)
+      put("notes", budget.notes ?: JSONObject.NULL)
+      put("default", budget.isDefault)
+      put("createdAtMillis", budget.createdAtMillis)
+      put("updatedAtMillis", budget.updatedAtMillis)
+    }
+
+  fun budgetItemToJson(item: com.example.data.local.BudgetItemEntity): JSONObject =
+    JSONObject().apply {
+      put("id", item.id)
+      put("budgetId", item.budgetId)
+      put("fiscalPeriodKey", item.fiscalPeriodKey)
+      put("classificationId", item.classificationId)
+      put("detailId", item.detailId ?: JSONObject.NULL)
+      put("amountCents", item.amountCents)
+      put("amountMxn", item.amountCents / 100.0)
+      put("warningThresholdPercent", item.warningThresholdPercent)
+      put("rolloverEnabled", item.rolloverEnabled)
+      put("rolloverCapCents", item.rolloverCapCents ?: JSONObject.NULL)
+      put("default", item.isDefault)
+      put("createdAtMillis", item.createdAtMillis)
+      put("updatedAtMillis", item.updatedAtMillis)
+    }
+
   fun transactionToJson(
     tx: FinanceTransactionEntity,
     classificationName: String? = null,
@@ -291,12 +321,16 @@ object ApiJsonBuilder {
     val merchantsUpserts = JSONArray()
     val accountsUpserts = JSONArray()
     val scheduledRulesUpserts = JSONArray()
+    val budgetsUpserts = JSONArray()
+    val budgetItemsUpserts = JSONArray()
 
     val deletedClassifications = JSONArray()
     val deletedDetails = JSONArray()
     val deletedMerchants = JSONArray()
     val deletedAccounts = JSONArray()
     val deletedScheduledRules = JSONArray()
+    val deletedBudgets = JSONArray()
+    val deletedBudgetItems = JSONArray()
 
     val includedQueueIds = pendingQueueItems.map { it.id }
     val includedTxIds = mutableSetOf<String>()
@@ -369,6 +403,8 @@ object ApiJsonBuilder {
             SyncEntityTypes.MERCHANT -> deletedMerchants.put(item.entityId)
             SyncEntityTypes.ACCOUNT -> deletedAccounts.put(item.entityId)
             SyncEntityTypes.SCHEDULED_RULE -> deletedScheduledRules.put(item.entityId)
+            SyncEntityTypes.BUDGET -> deletedBudgets.put(item.entityId)
+            SyncEntityTypes.BUDGET_ITEM -> deletedBudgetItems.put(item.entityId)
           }
         } else {
           val parsed = runCatching { JSONObject(item.payloadJson) }.getOrNull() ?: return@forEach
@@ -378,6 +414,8 @@ object ApiJsonBuilder {
             SyncEntityTypes.MERCHANT -> merchantsUpserts.put(parsed)
             SyncEntityTypes.ACCOUNT -> accountsUpserts.put(parsed)
             SyncEntityTypes.SCHEDULED_RULE -> scheduledRulesUpserts.put(parsed)
+            SyncEntityTypes.BUDGET -> budgetsUpserts.put(parsed)
+            SyncEntityTypes.BUDGET_ITEM -> budgetItemsUpserts.put(parsed)
           }
         }
       }
@@ -389,11 +427,15 @@ object ApiJsonBuilder {
         merchantsUpserts.length() +
         accountsUpserts.length() +
         scheduledRulesUpserts.length() +
+        budgetsUpserts.length() +
+        budgetItemsUpserts.length() +
         deletedClassifications.length() +
         deletedDetails.length() +
         deletedMerchants.length() +
         deletedAccounts.length() +
-        deletedScheduledRules.length()
+        deletedScheduledRules.length() +
+        deletedBudgets.length() +
+        deletedBudgetItems.length()
 
     val totalItems = txUpsertsArray.length() + txDeletesArray.length() + adminCount
     val root = JSONObject().apply {
@@ -409,6 +451,8 @@ object ApiJsonBuilder {
           put("merchants", merchantsUpserts)
           put("accounts", accountsUpserts)
           put("scheduledRules", scheduledRulesUpserts)
+          put("budgets", budgetsUpserts)
+          put("budgetItems", budgetItemsUpserts)
           put(
             "deletedIds",
             JSONObject().apply {
@@ -417,6 +461,8 @@ object ApiJsonBuilder {
               put("merchants", deletedMerchants)
               put("accounts", deletedAccounts)
               put("scheduledRules", deletedScheduledRules)
+              put("budgets", deletedBudgets)
+              put("budgetItems", deletedBudgetItems)
             },
           )
         },

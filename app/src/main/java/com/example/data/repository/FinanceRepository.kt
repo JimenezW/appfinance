@@ -30,6 +30,8 @@ class FinanceRepository(private val dao: FinanceDao) {
   val merchants: Flow<List<MerchantEntity>> = dao.observeAllMerchants()
   val scheduledRules: Flow<List<ScheduledRuleEntity>> = dao.observeAllScheduledRules()
   val transactions: Flow<List<FinanceTransactionEntity>> = dao.observeAllTransactions()
+  val budgets: Flow<List<com.example.data.local.BudgetEntity>> = dao.observeAllBudgets()
+  val budgetItems: Flow<List<com.example.data.local.BudgetItemEntity>> = dao.observeAllBudgetItems()
   val pendingSyncQueue: Flow<List<SyncQueueItemEntity>> = dao.observePendingSyncQueue()
   val allSyncQueue: Flow<List<SyncQueueItemEntity>> = dao.observeAllSyncQueue()
   val syncSettings: Flow<SyncSettingsEntity?> = dao.observeSyncSettings()
@@ -503,5 +505,445 @@ class FinanceRepository(private val dao: FinanceDao) {
       },
     )
     return root.toString(2)
+  }
+
+  // --- Budgets CRUD & Operations ---
+  suspend fun ensureExplicitBudgetForPeriod(
+    fiscalPeriodKey: String,
+    baselineCategories: List<com.example.domain.BudgetCategoryEvaluation> = emptyList(),
+    expectedIncomeCents: Long? = null,
+    savingsGoalCents: Long? = null,
+    globalExpenseLimitCents: Long? = null,
+    notes: String? = null,
+  ): com.example.data.local.BudgetEntity {
+    val now = System.currentTimeMillis()
+    val existing = dao.getBudgetByPeriodKeyOnce(fiscalPeriodKey)
+    if (existing != null && existing.deletedAtMillis == null) {
+      return existing
+    }
+    val budgetId = com.example.domain.BudgetEngine.budgetIdForPeriod(fiscalPeriodKey)
+    val created =
+      com.example.data.local.BudgetEntity(
+        id = budgetId,
+        fiscalPeriodKey = fiscalPeriodKey,
+        expectedIncomeCents = expectedIncomeCents,
+        savingsGoalCents = savingsGoalCents,
+        globalExpenseLimitCents = globalExpenseLimitCents,
+        notes = notes,
+        isDefault = false,
+        createdAtMillis = existing?.createdAtMillis ?: now,
+        updatedAtMillis = now,
+        deletedAtMillis = null,
+      )
+    dao.insertBudget(created)
+    dao.insertSyncQueueItem(
+      SyncQueueItemEntity(
+        entityType = SyncEntityTypes.BUDGET,
+        entityId = created.id,
+        operation = SyncOperations.UPSERT,
+        payloadJson = ApiJsonBuilder.budgetToJson(created).toString(),
+        createdAtMillis = now,
+      )
+    )
+
+    // Materialize inherited/catalog baseline items so editing one category preserves the rest
+    val materialized = mutableListOf<com.example.data.local.BudgetItemEntity>()
+    baselineCategories.forEach { cat ->
+      val rootId = com.example.domain.BudgetEngine.budgetItemId(budgetId, cat.classificationId, null)
+      materialized.add(
+        com.example.data.local.BudgetItemEntity(
+          id = rootId,
+          budgetId = budgetId,
+          fiscalPeriodKey = fiscalPeriodKey,
+          classificationId = cat.classificationId,
+          detailId = null,
+          amountCents = cat.budgetedCents,
+          warningThresholdPercent = cat.warningThresholdPercent,
+          rolloverEnabled = cat.rolloverEnabled,
+          rolloverCapCents = cat.rolloverCapCents,
+          isDefault = false,
+          createdAtMillis = now,
+          updatedAtMillis = now,
+          deletedAtMillis = null,
+        )
+      )
+      cat.subLimits.forEach { sub ->
+        val subId =
+          com.example.domain.BudgetEngine.budgetItemId(budgetId, cat.classificationId, sub.detailId)
+        materialized.add(
+          com.example.data.local.BudgetItemEntity(
+            id = subId,
+            budgetId = budgetId,
+            fiscalPeriodKey = fiscalPeriodKey,
+            classificationId = cat.classificationId,
+            detailId = sub.detailId,
+            amountCents = sub.budgetedCents,
+            warningThresholdPercent = sub.warningThresholdPercent,
+            rolloverEnabled = false,
+            rolloverCapCents = null,
+            isDefault = false,
+            createdAtMillis = now,
+            updatedAtMillis = now,
+            deletedAtMillis = null,
+          )
+        )
+      }
+    }
+    if (materialized.isNotEmpty()) {
+      dao.insertBudgetItems(materialized)
+      materialized.forEach { item ->
+        dao.insertSyncQueueItem(
+          SyncQueueItemEntity(
+            entityType = SyncEntityTypes.BUDGET_ITEM,
+            entityId = item.id,
+            operation = SyncOperations.UPSERT,
+            payloadJson = ApiJsonBuilder.budgetItemToJson(item).toString(),
+            createdAtMillis = now,
+          )
+        )
+      }
+    }
+    return created
+  }
+
+  suspend fun saveBudgetCategoryConfig(
+    fiscalPeriodKey: String,
+    baselineSummary: com.example.domain.BudgetPeriodSummary,
+    classificationId: String,
+    baseAmountCents: Long,
+    warningThresholdPercent: Int,
+    rolloverEnabled: Boolean,
+    rolloverCapCents: Long?,
+    subLimitsByDetailId: Map<String, Long>,
+  ) {
+    val now = System.currentTimeMillis()
+    val budget =
+      ensureExplicitBudgetForPeriod(
+        fiscalPeriodKey = fiscalPeriodKey,
+        baselineCategories = baselineSummary.categories,
+        expectedIncomeCents = baselineSummary.expectedIncomeCents.takeIf { it > 0L },
+        savingsGoalCents = baselineSummary.savingsGoalCents.takeIf { it > 0L },
+        globalExpenseLimitCents = baselineSummary.globalExpenseLimitCents,
+        notes = baselineSummary.notes,
+      )
+    val existingItems =
+      dao.getActiveBudgetItemsByBudgetIdOnce(budget.id).filter {
+        it.classificationId == classificationId
+      }
+
+    // Upsert root classification budget item
+    val rootItemId =
+      com.example.domain.BudgetEngine.budgetItemId(budget.id, classificationId, null)
+    val rootItem =
+      com.example.data.local.BudgetItemEntity(
+        id = rootItemId,
+        budgetId = budget.id,
+        fiscalPeriodKey = fiscalPeriodKey,
+        classificationId = classificationId,
+        detailId = null,
+        amountCents = baseAmountCents,
+        warningThresholdPercent = warningThresholdPercent.coerceIn(1, 99),
+        rolloverEnabled = rolloverEnabled,
+        rolloverCapCents = if (rolloverEnabled) rolloverCapCents?.takeIf { it > 0L } else null,
+        isDefault = false,
+        createdAtMillis = existingItems.firstOrNull { it.detailId == null }?.createdAtMillis ?: now,
+        updatedAtMillis = now,
+        deletedAtMillis = null,
+      )
+    dao.insertBudgetItem(rootItem)
+    dao.insertSyncQueueItem(
+      SyncQueueItemEntity(
+        entityType = SyncEntityTypes.BUDGET_ITEM,
+        entityId = rootItem.id,
+        operation = SyncOperations.UPSERT,
+        payloadJson = ApiJsonBuilder.budgetItemToJson(rootItem).toString(),
+        createdAtMillis = now,
+      )
+    )
+
+    // Upsert active sub-limits and soft-delete cleared sub-limits
+    val activeDetailIds = subLimitsByDetailId.filterValues { it > 0L }.keys
+    subLimitsByDetailId
+      .filterValues { it > 0L }
+      .forEach { (detailId, amount) ->
+        val subId =
+          com.example.domain.BudgetEngine.budgetItemId(budget.id, classificationId, detailId)
+        val subItem =
+          com.example.data.local.BudgetItemEntity(
+            id = subId,
+            budgetId = budget.id,
+            fiscalPeriodKey = fiscalPeriodKey,
+            classificationId = classificationId,
+            detailId = detailId,
+            amountCents = amount,
+            warningThresholdPercent = warningThresholdPercent.coerceIn(1, 99),
+            rolloverEnabled = false,
+            rolloverCapCents = null,
+            isDefault = false,
+            createdAtMillis =
+              existingItems.firstOrNull { it.detailId == detailId }?.createdAtMillis ?: now,
+            updatedAtMillis = now,
+            deletedAtMillis = null,
+          )
+        dao.insertBudgetItem(subItem)
+        dao.insertSyncQueueItem(
+          SyncQueueItemEntity(
+            entityType = SyncEntityTypes.BUDGET_ITEM,
+            entityId = subItem.id,
+            operation = SyncOperations.UPSERT,
+            payloadJson = ApiJsonBuilder.budgetItemToJson(subItem).toString(),
+            createdAtMillis = now,
+          )
+        )
+      }
+
+    existingItems
+      .filter { it.detailId != null && it.detailId !in activeDetailIds }
+      .forEach { obsolete ->
+        dao.softDeleteBudgetItem(obsolete.id, now)
+        dao.insertSyncQueueItem(
+          SyncQueueItemEntity(
+            entityType = SyncEntityTypes.BUDGET_ITEM,
+            entityId = obsolete.id,
+            operation = SyncOperations.DELETE,
+            payloadJson = ApiJsonBuilder.budgetItemToJson(obsolete).toString(),
+            createdAtMillis = now,
+          )
+        )
+      }
+  }
+
+  suspend fun deleteBudgetCategory(
+    fiscalPeriodKey: String,
+    baselineSummary: com.example.domain.BudgetPeriodSummary,
+    classificationId: String,
+  ) {
+    val now = System.currentTimeMillis()
+    val budget =
+      ensureExplicitBudgetForPeriod(
+        fiscalPeriodKey = fiscalPeriodKey,
+        baselineCategories = baselineSummary.categories,
+        expectedIncomeCents = baselineSummary.expectedIncomeCents.takeIf { it > 0L },
+        savingsGoalCents = baselineSummary.savingsGoalCents.takeIf { it > 0L },
+        globalExpenseLimitCents = baselineSummary.globalExpenseLimitCents,
+        notes = baselineSummary.notes,
+      )
+    val toRemove =
+      dao.getActiveBudgetItemsByBudgetIdOnce(budget.id).filter {
+        it.classificationId == classificationId
+      }
+    toRemove.forEach { item ->
+      dao.softDeleteBudgetItem(item.id, now)
+      dao.insertSyncQueueItem(
+        SyncQueueItemEntity(
+          entityType = SyncEntityTypes.BUDGET_ITEM,
+          entityId = item.id,
+          operation = SyncOperations.DELETE,
+          payloadJson = ApiJsonBuilder.budgetItemToJson(item).toString(),
+          createdAtMillis = now,
+        )
+      )
+    }
+  }
+
+  suspend fun saveBudgetHeader(
+    fiscalPeriodKey: String,
+    baselineSummary: com.example.domain.BudgetPeriodSummary,
+    expectedIncomeCents: Long?,
+    savingsGoalCents: Long?,
+    globalExpenseLimitCents: Long?,
+    notes: String?,
+  ) {
+    val now = System.currentTimeMillis()
+    val existing =
+      ensureExplicitBudgetForPeriod(
+        fiscalPeriodKey = fiscalPeriodKey,
+        baselineCategories = baselineSummary.categories,
+        expectedIncomeCents = expectedIncomeCents,
+        savingsGoalCents = savingsGoalCents,
+        globalExpenseLimitCents = globalExpenseLimitCents,
+        notes = notes,
+      )
+    val updated =
+      existing.copy(
+        expectedIncomeCents = expectedIncomeCents,
+        savingsGoalCents = savingsGoalCents,
+        globalExpenseLimitCents = globalExpenseLimitCents,
+        notes = notes?.trim()?.takeIf { it.isNotEmpty() },
+        updatedAtMillis = now,
+        deletedAtMillis = null,
+      )
+    dao.insertBudget(updated)
+    dao.insertSyncQueueItem(
+      SyncQueueItemEntity(
+        entityType = SyncEntityTypes.BUDGET,
+        entityId = updated.id,
+        operation = SyncOperations.UPSERT,
+        payloadJson = ApiJsonBuilder.budgetToJson(updated).toString(),
+        createdAtMillis = now,
+      )
+    )
+  }
+
+  suspend fun cloneBudgetFromSummary(
+    targetPeriodKey: String,
+    sourceSummary: com.example.domain.BudgetPeriodSummary,
+  ): Int {
+    val now = System.currentTimeMillis()
+    val budgetId = com.example.domain.BudgetEngine.budgetIdForPeriod(targetPeriodKey)
+    val existingBudget = dao.getBudgetByPeriodKeyOnce(targetPeriodKey)
+    val targetBudget =
+      com.example.data.local.BudgetEntity(
+        id = budgetId,
+        fiscalPeriodKey = targetPeriodKey,
+        expectedIncomeCents = sourceSummary.expectedIncomeCents.takeIf { it > 0L },
+        savingsGoalCents = sourceSummary.savingsGoalCents.takeIf { it > 0L },
+        globalExpenseLimitCents = sourceSummary.globalExpenseLimitCents,
+        notes = sourceSummary.notes,
+        isDefault = false,
+        createdAtMillis = existingBudget?.createdAtMillis ?: now,
+        updatedAtMillis = now,
+        deletedAtMillis = null,
+      )
+    dao.insertBudget(targetBudget)
+    dao.insertSyncQueueItem(
+      SyncQueueItemEntity(
+        entityType = SyncEntityTypes.BUDGET,
+        entityId = targetBudget.id,
+        operation = SyncOperations.UPSERT,
+        payloadJson = ApiJsonBuilder.budgetToJson(targetBudget).toString(),
+        createdAtMillis = now,
+      )
+    )
+
+    // Soft-delete existing target items before cloning
+    val oldItems = dao.getActiveBudgetItemsByBudgetIdOnce(budgetId)
+    oldItems.forEach { item ->
+      dao.softDeleteBudgetItem(item.id, now)
+      dao.insertSyncQueueItem(
+        SyncQueueItemEntity(
+          entityType = SyncEntityTypes.BUDGET_ITEM,
+          entityId = item.id,
+          operation = SyncOperations.DELETE,
+          payloadJson = ApiJsonBuilder.budgetItemToJson(item).toString(),
+          createdAtMillis = now,
+        )
+      )
+    }
+
+    val clonedItems = mutableListOf<com.example.data.local.BudgetItemEntity>()
+    sourceSummary.categories.forEach { cat ->
+      val rootId = com.example.domain.BudgetEngine.budgetItemId(budgetId, cat.classificationId, null)
+      clonedItems.add(
+        com.example.data.local.BudgetItemEntity(
+          id = rootId,
+          budgetId = budgetId,
+          fiscalPeriodKey = targetPeriodKey,
+          classificationId = cat.classificationId,
+          detailId = null,
+          amountCents = cat.budgetedCents,
+          warningThresholdPercent = cat.warningThresholdPercent,
+          rolloverEnabled = cat.rolloverEnabled,
+          rolloverCapCents = cat.rolloverCapCents,
+          isDefault = false,
+          createdAtMillis = now,
+          updatedAtMillis = now,
+          deletedAtMillis = null,
+        )
+      )
+      cat.subLimits.forEach { sub ->
+        val subId =
+          com.example.domain.BudgetEngine.budgetItemId(budgetId, cat.classificationId, sub.detailId)
+        clonedItems.add(
+          com.example.data.local.BudgetItemEntity(
+            id = subId,
+            budgetId = budgetId,
+            fiscalPeriodKey = targetPeriodKey,
+            classificationId = cat.classificationId,
+            detailId = sub.detailId,
+            amountCents = sub.budgetedCents,
+            warningThresholdPercent = sub.warningThresholdPercent,
+            rolloverEnabled = false,
+            rolloverCapCents = null,
+            isDefault = false,
+            createdAtMillis = now,
+            updatedAtMillis = now,
+            deletedAtMillis = null,
+          )
+        )
+      }
+    }
+    if (clonedItems.isNotEmpty()) {
+      dao.insertBudgetItems(clonedItems)
+      clonedItems.forEach { item ->
+        dao.insertSyncQueueItem(
+          SyncQueueItemEntity(
+            entityType = SyncEntityTypes.BUDGET_ITEM,
+            entityId = item.id,
+            operation = SyncOperations.UPSERT,
+            payloadJson = ApiJsonBuilder.budgetItemToJson(item).toString(),
+            createdAtMillis = now,
+          )
+        )
+      }
+    }
+    return clonedItems.size
+  }
+
+  suspend fun applyBudgetSuggestions(
+    targetPeriodKey: String,
+    baselineSummary: com.example.domain.BudgetPeriodSummary,
+    suggestions: List<com.example.domain.BudgetCategorySuggestion>,
+  ): Int {
+    if (suggestions.isEmpty()) return 0
+    val now = System.currentTimeMillis()
+    val budget =
+      ensureExplicitBudgetForPeriod(
+        fiscalPeriodKey = targetPeriodKey,
+        baselineCategories = baselineSummary.categories,
+        expectedIncomeCents = baselineSummary.expectedIncomeCents.takeIf { it > 0L },
+        savingsGoalCents = baselineSummary.savingsGoalCents.takeIf { it > 0L },
+        globalExpenseLimitCents = baselineSummary.globalExpenseLimitCents,
+        notes = baselineSummary.notes,
+      )
+    val existingByClass =
+      dao.getActiveBudgetItemsByBudgetIdOnce(budget.id)
+        .filter { it.detailId == null }
+        .associateBy { it.classificationId }
+
+    val toUpsert =
+      suggestions.map { s ->
+        val existing = existingByClass[s.classificationId]
+        val rootId =
+          com.example.domain.BudgetEngine.budgetItemId(budget.id, s.classificationId, null)
+        com.example.data.local.BudgetItemEntity(
+          id = rootId,
+          budgetId = budget.id,
+          fiscalPeriodKey = targetPeriodKey,
+          classificationId = s.classificationId,
+          detailId = null,
+          amountCents = s.suggestedCents,
+          warningThresholdPercent = existing?.warningThresholdPercent ?: 80,
+          rolloverEnabled = existing?.rolloverEnabled ?: false,
+          rolloverCapCents = existing?.rolloverCapCents,
+          isDefault = false,
+          createdAtMillis = existing?.createdAtMillis ?: now,
+          updatedAtMillis = now,
+          deletedAtMillis = null,
+        )
+      }
+    dao.insertBudgetItems(toUpsert)
+    toUpsert.forEach { item ->
+      dao.insertSyncQueueItem(
+        SyncQueueItemEntity(
+          entityType = SyncEntityTypes.BUDGET_ITEM,
+          entityId = item.id,
+          operation = SyncOperations.UPSERT,
+          payloadJson = ApiJsonBuilder.budgetItemToJson(item).toString(),
+          createdAtMillis = now,
+        )
+      )
+    }
+    return toUpsert.size
   }
 }

@@ -602,6 +602,60 @@ class SyncManager(
       }
     }
 
+    val budgetsList = mutableListOf<com.example.data.local.BudgetEntity>()
+    changes.optJSONArray("budgets")?.let { arr ->
+      for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val created = o.optLong("createdAtMillis", now)
+        val updated = o.optLong("updatedAtMillis", created)
+        budgetsList.add(
+          com.example.data.local.BudgetEntity(
+            id = o.getString("id"),
+            fiscalPeriodKey = o.getString("fiscalPeriodKey"),
+            expectedIncomeCents =
+              if (o.isNull("expectedIncomeCents")) null else o.optLong("expectedIncomeCents"),
+            savingsGoalCents =
+              if (o.isNull("savingsGoalCents")) null else o.optLong("savingsGoalCents"),
+            globalExpenseLimitCents =
+              if (o.isNull("globalExpenseLimitCents")) null
+              else o.optLong("globalExpenseLimitCents"),
+            notes = if (o.isNull("notes")) null else o.optString("notes"),
+            isDefault = o.optBoolean("default", false),
+            createdAtMillis = created,
+            updatedAtMillis = updated,
+            deletedAtMillis = optDeletedMillis(o),
+          )
+        )
+      }
+    }
+
+    val budgetItemsList = mutableListOf<com.example.data.local.BudgetItemEntity>()
+    changes.optJSONArray("budgetItems")?.let { arr ->
+      for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val created = o.optLong("createdAtMillis", now)
+        val updated = o.optLong("updatedAtMillis", created)
+        budgetItemsList.add(
+          com.example.data.local.BudgetItemEntity(
+            id = o.getString("id"),
+            budgetId = o.getString("budgetId"),
+            fiscalPeriodKey = o.getString("fiscalPeriodKey"),
+            classificationId = o.getString("classificationId"),
+            detailId = if (o.isNull("detailId")) null else o.optString("detailId"),
+            amountCents = o.optLong("amountCents", 0L),
+            warningThresholdPercent = o.optInt("warningThresholdPercent", 80).coerceIn(1, 99),
+            rolloverEnabled = o.optBoolean("rolloverEnabled", false),
+            rolloverCapCents =
+              if (o.isNull("rolloverCapCents")) null else o.optLong("rolloverCapCents"),
+            isDefault = o.optBoolean("default", false),
+            createdAtMillis = created,
+            updatedAtMillis = updated,
+            deletedAtMillis = optDeletedMillis(o),
+          )
+        )
+      }
+    }
+
     dao.applyPullChangesAtomic(
       types = typesList,
       classifications = classificationsList,
@@ -610,6 +664,8 @@ class SyncManager(
       merchants = merchantsList,
       scheduledRules = rulesList,
       transactions = transactionsList,
+      budgets = budgetsList,
+      budgetItems = budgetItemsList,
     )
 
     val count =
@@ -619,7 +675,9 @@ class SyncManager(
         accountsList.size +
         merchantsList.size +
         rulesList.size +
-        transactionsList.size
+        transactionsList.size +
+        budgetsList.size +
+        budgetItemsList.size
 
     return PullApplyOutcome(appliedCount = count, serverTimestampMillis = serverTs)
   }

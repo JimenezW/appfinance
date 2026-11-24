@@ -185,7 +185,7 @@ fun MisFinanzasApp(
   LaunchedEffect(initialTabExtra) {
     when (initialTabExtra) {
       com.example.data.notifications.AppNotificationHelper.TAB_PROGRAMADOS ->
-        viewModel.selectTab(MainTab.PROGRAMADOS)
+        viewModel.openAdminSection(AdminSubSection.SCHEDULED)
       com.example.data.notifications.AppNotificationHelper.TAB_ADMIN_SYNC ->
         viewModel.openAdminSection(AdminSubSection.BACKUP)
     }
@@ -260,7 +260,7 @@ fun MisFinanzasApp(
                       onApplyIncomeShortcut = viewModel::applyIncomeShortcut,
                       onSaveTransaction = viewModel::saveCapturedTransaction,
                       onConfirmPendingRule = { pending -> viewModel.confirmPendingRule(pending) },
-                      onOpenScheduledTab = { viewModel.selectTab(MainTab.PROGRAMADOS) },
+                      onOpenScheduledTab = { viewModel.openAdminSection(AdminSubSection.SCHEDULED) },
                       onOpenAccountsAdmin = { viewModel.openAdminSection(AdminSubSection.ACCOUNTS) },
                       onOpenSyncAdmin = { viewModel.openAdminSection(AdminSubSection.BACKUP) },
                       onQuickCreateClassification = viewModel::quickCreateClassification,
@@ -284,22 +284,28 @@ fun MisFinanzasApp(
                       onNavigateToCapture = { viewModel.selectTab(MainTab.CAPTURAR) },
                     )
 
-                  MainTab.PROGRAMADOS ->
-                    ScheduledScreen(
+                  MainTab.PRESUPUESTO ->
+                    com.example.ui.screens.BudgetScreen(
                       state = state,
-                      onConfirmPending = viewModel::confirmPendingRule,
-                      onSnoozePending = viewModel::snoozePendingRule24h,
-                      onConfirmRuleNow = { rule -> viewModel.confirmRuleImmediately(rule) },
-                      onToggleRuleActive = viewModel::toggleScheduledRuleActive,
-                      onSaveRule = viewModel::saveScheduledRule,
-                      onDeleteRule = viewModel::deleteScheduledRule,
+                      onPrevPeriod = viewModel::previousPeriod,
+                      onNextPeriod = viewModel::nextPeriod,
+                      onClonePreviousPeriod = viewModel::clonePreviousPeriodBudget,
+                      onApplySuggestions = viewModel::applyBudgetSuggestions,
+                      onSaveCategoryConfig = viewModel::saveBudgetCategoryConfig,
+                      onDeleteCategory = viewModel::deleteBudgetCategory,
+                      onSaveBudgetHeader = viewModel::saveBudgetHeader,
                     )
 
                   MainTab.ADMIN ->
                     AdminScreen(
                       state = state,
                       onSelectSubSection = viewModel::openAdminSection,
-                      onOpenScheduledTab = { viewModel.selectTab(MainTab.PROGRAMADOS) },
+                      onConfirmPendingRule = viewModel::confirmPendingRule,
+                      onSnoozePendingRule = viewModel::snoozePendingRule24h,
+                      onConfirmRuleNow = { rule -> viewModel.confirmRuleImmediately(rule) },
+                      onToggleRuleActive = viewModel::toggleScheduledRuleActive,
+                      onSaveScheduledRule = viewModel::saveScheduledRule,
+                      onDeleteScheduledRule = viewModel::deleteScheduledRule,
                       onSaveClassification = viewModel::saveClassification,
                       onDeleteClassification = viewModel::deleteClassification,
                       onSaveDetail = viewModel::saveDetail,

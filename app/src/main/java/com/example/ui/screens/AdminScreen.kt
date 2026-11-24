@@ -68,7 +68,12 @@ import com.example.ui.theme.LocalFinanceColors
 fun AdminScreen(
   state: FinanceUiState,
   onSelectSubSection: (AdminSubSection) -> Unit,
-  onOpenScheduledTab: () -> Unit,
+  onConfirmPendingRule: (com.example.ui.PendingRuleDisplay, Long?) -> Unit,
+  onSnoozePendingRule: (com.example.data.local.ScheduledRuleEntity) -> Unit,
+  onConfirmRuleNow: (com.example.data.local.ScheduledRuleEntity) -> Unit,
+  onToggleRuleActive: (com.example.data.local.ScheduledRuleEntity) -> Unit,
+  onSaveScheduledRule: (com.example.data.local.ScheduledRuleEntity) -> Unit,
+  onDeleteScheduledRule: (com.example.data.local.ScheduledRuleEntity) -> Unit,
   onSaveClassification: (ClassificationEntity) -> Unit,
   onDeleteClassification: (ClassificationEntity) -> Unit,
   onSaveDetail: (DetailItemEntity) -> Unit,
@@ -98,10 +103,7 @@ fun AdminScreen(
     AdminSubSection.HUB ->
       AdminHubView(
         state = state,
-        onOpenSection = { section ->
-          if (section == AdminSubSection.SCHEDULED) onOpenScheduledTab()
-          else onSelectSubSection(section)
-        },
+        onOpenSection = { section -> onSelectSubSection(section) },
         onToggleAutoWifiSync = onToggleAutoWifiSync,
         onTriggerManualSync = onTriggerManualSync,
         onGenerateAdminConfigJson = onGenerateAdminConfigJson,
@@ -135,7 +137,18 @@ fun AdminScreen(
         onDeleteMerchant = onDeleteMerchant,
         modifier = modifier,
       )
-    AdminSubSection.SCHEDULED -> onOpenScheduledTab()
+    AdminSubSection.SCHEDULED ->
+      ScheduledScreen(
+        state = state,
+        onConfirmPending = onConfirmPendingRule,
+        onSnoozePending = onSnoozePendingRule,
+        onConfirmRuleNow = onConfirmRuleNow,
+        onToggleRuleActive = onToggleRuleActive,
+        onSaveRule = onSaveScheduledRule,
+        onDeleteRule = onDeleteScheduledRule,
+        onBack = { onSelectSubSection(AdminSubSection.HUB) },
+        modifier = modifier,
+      )
     AdminSubSection.BACKUP ->
       SyncAndExportView(
         state = state,

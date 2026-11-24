@@ -347,6 +347,60 @@ interface FinanceDao {
     }
   }
 
+  // --- Budgets & Budget Items ---
+  @Query("SELECT * FROM budgets WHERE deletedAtMillis IS NULL ORDER BY fiscalPeriodKey DESC")
+  fun observeAllBudgets(): Flow<List<BudgetEntity>>
+
+  @Query(
+    "SELECT * FROM budget_items WHERE deletedAtMillis IS NULL ORDER BY fiscalPeriodKey DESC, classificationId ASC"
+  )
+  fun observeAllBudgetItems(): Flow<List<BudgetItemEntity>>
+
+  @Query("SELECT * FROM budgets WHERE deletedAtMillis IS NULL ORDER BY fiscalPeriodKey DESC")
+  suspend fun getAllBudgetsOnce(): List<BudgetEntity>
+
+  @Query("SELECT * FROM budget_items WHERE deletedAtMillis IS NULL")
+  suspend fun getAllBudgetItemsOnce(): List<BudgetItemEntity>
+
+  @Query("SELECT * FROM budgets WHERE fiscalPeriodKey = :periodKey LIMIT 1")
+  suspend fun getBudgetByPeriodKeyOnce(periodKey: String): BudgetEntity?
+
+  @Query("SELECT * FROM budget_items WHERE budgetId = :budgetId AND deletedAtMillis IS NULL")
+  suspend fun getActiveBudgetItemsByBudgetIdOnce(budgetId: String): List<BudgetItemEntity>
+
+  @Upsert
+  suspend fun insertBudget(budget: BudgetEntity)
+
+  @Upsert
+  suspend fun insertBudgets(budgets: List<BudgetEntity>)
+
+  @Upsert
+  suspend fun insertBudgetItem(item: BudgetItemEntity)
+
+  @Upsert
+  suspend fun insertBudgetItems(items: List<BudgetItemEntity>)
+
+  @Query(
+    "UPDATE budgets SET deletedAtMillis = :deletedAtMillis, updatedAtMillis = :deletedAtMillis WHERE id = :id"
+  )
+  suspend fun softDeleteBudget(id: String, deletedAtMillis: Long)
+
+  @Query(
+    "UPDATE budget_items SET deletedAtMillis = :deletedAtMillis, updatedAtMillis = :deletedAtMillis WHERE id = :id"
+  )
+  suspend fun softDeleteBudgetItem(id: String, deletedAtMillis: Long)
+
+  @Query(
+    "UPDATE budget_items SET deletedAtMillis = :deletedAtMillis, updatedAtMillis = :deletedAtMillis WHERE budgetId = :budgetId AND deletedAtMillis IS NULL"
+  )
+  suspend fun softDeleteBudgetItemsByBudgetId(budgetId: String, deletedAtMillis: Long)
+
+  @Query("DELETE FROM budget_items")
+  suspend fun deleteAllBudgetItems()
+
+  @Query("DELETE FROM budgets")
+  suspend fun deleteAllBudgets()
+
   @Transaction
   suspend fun applyPullChangesAtomic(
     types: List<TransactionTypeEntity>,
@@ -356,6 +410,8 @@ interface FinanceDao {
     merchants: List<MerchantEntity>,
     scheduledRules: List<ScheduledRuleEntity>,
     transactions: List<FinanceTransactionEntity>,
+    budgets: List<BudgetEntity> = emptyList(),
+    budgetItems: List<BudgetItemEntity> = emptyList(),
   ) {
     if (types.isNotEmpty()) insertTypes(types)
     if (classifications.isNotEmpty()) insertClassifications(classifications)
@@ -364,10 +420,14 @@ interface FinanceDao {
     if (merchants.isNotEmpty()) insertMerchants(merchants)
     if (scheduledRules.isNotEmpty()) insertScheduledRules(scheduledRules)
     if (transactions.isNotEmpty()) insertTransactions(transactions)
+    if (budgets.isNotEmpty()) insertBudgets(budgets)
+    if (budgetItems.isNotEmpty()) insertBudgetItems(budgetItems)
   }
 
   @Transaction
   suspend fun clearAllData() {
+    deleteAllBudgetItems()
+    deleteAllBudgets()
     deleteAllTransactions()
     deleteAllScheduledRules()
     deleteAllMerchants()

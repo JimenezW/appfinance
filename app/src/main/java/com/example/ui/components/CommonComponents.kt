@@ -28,7 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.AddCircleOutline
-import androidx.compose.material.icons.outlined.EventRepeat
+import androidx.compose.material.icons.outlined.PieChart
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.rounded.AccountBalanceWallet
@@ -36,7 +36,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddCircle
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.EventRepeat
+import androidx.compose.material.icons.rounded.PieChart
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Tune
@@ -153,30 +153,20 @@ fun FinanceBottomNavigationBar(
         ),
     )
     NavigationBarItem(
-      selected = currentTab == MainTab.PROGRAMADOS,
-      onClick = { onSelectTab(MainTab.PROGRAMADOS) },
-      modifier = Modifier.testTag("nav_programados"),
+      selected = currentTab == MainTab.PRESUPUESTO,
+      onClick = { onSelectTab(MainTab.PRESUPUESTO) },
+      modifier = Modifier.testTag("nav_presupuesto"),
       icon = {
-        BadgedBox(
-          badge = {
-            if (pendingCount > 0) {
-              Badge(containerColor = financeColors.pendingAccent, contentColor = Color.White) {
-                Text(pendingCount.toString())
-              }
-            }
-          }
-        ) {
-          Icon(
-            imageVector =
-              if (currentTab == MainTab.PROGRAMADOS) Icons.Rounded.EventRepeat
-              else Icons.Outlined.EventRepeat,
-            contentDescription = stringResource(R.string.nav_programados),
-          )
-        }
+        Icon(
+          imageVector =
+            if (currentTab == MainTab.PRESUPUESTO) Icons.Rounded.PieChart
+            else Icons.Outlined.PieChart,
+          contentDescription = stringResource(R.string.nav_presupuesto),
+        )
       },
       label = {
         Text(
-          text = stringResource(R.string.nav_programados),
+          text = stringResource(R.string.nav_presupuesto),
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -193,11 +183,21 @@ fun FinanceBottomNavigationBar(
       onClick = { onSelectTab(MainTab.ADMIN) },
       modifier = Modifier.testTag("nav_admin"),
       icon = {
-        Icon(
-          imageVector =
-            if (currentTab == MainTab.ADMIN) Icons.Rounded.Tune else Icons.Outlined.Tune,
-          contentDescription = stringResource(R.string.nav_admin),
-        )
+        BadgedBox(
+          badge = {
+            if (pendingCount > 0) {
+              Badge(containerColor = financeColors.pendingAccent, contentColor = Color.White) {
+                Text(pendingCount.toString())
+              }
+            }
+          }
+        ) {
+          Icon(
+            imageVector =
+              if (currentTab == MainTab.ADMIN) Icons.Rounded.Tune else Icons.Outlined.Tune,
+            contentDescription = stringResource(R.string.nav_admin),
+          )
+        }
       },
       label = {
         Text(
@@ -266,9 +266,24 @@ fun FinanceNavigationRail(
       colors = itemColors,
     )
     NavigationRailItem(
-      selected = currentTab == MainTab.PROGRAMADOS,
-      onClick = { onSelectTab(MainTab.PROGRAMADOS) },
-      modifier = Modifier.testTag("rail_programados"),
+      selected = currentTab == MainTab.PRESUPUESTO,
+      onClick = { onSelectTab(MainTab.PRESUPUESTO) },
+      modifier = Modifier.testTag("rail_presupuesto"),
+      icon = {
+        Icon(
+          imageVector =
+            if (currentTab == MainTab.PRESUPUESTO) Icons.Rounded.PieChart
+            else Icons.Outlined.PieChart,
+          contentDescription = stringResource(R.string.nav_presupuesto),
+        )
+      },
+      label = { Text(stringResource(R.string.nav_presupuesto), maxLines = 1) },
+      colors = itemColors,
+    )
+    NavigationRailItem(
+      selected = currentTab == MainTab.ADMIN,
+      onClick = { onSelectTab(MainTab.ADMIN) },
+      modifier = Modifier.testTag("rail_admin"),
       icon = {
         BadgedBox(
           badge = {
@@ -281,25 +296,10 @@ fun FinanceNavigationRail(
         ) {
           Icon(
             imageVector =
-              if (currentTab == MainTab.PROGRAMADOS) Icons.Rounded.EventRepeat
-              else Icons.Outlined.EventRepeat,
-            contentDescription = stringResource(R.string.nav_programados),
+              if (currentTab == MainTab.ADMIN) Icons.Rounded.Tune else Icons.Outlined.Tune,
+            contentDescription = stringResource(R.string.nav_admin),
           )
         }
-      },
-      label = { Text(stringResource(R.string.nav_programados), maxLines = 1) },
-      colors = itemColors,
-    )
-    NavigationRailItem(
-      selected = currentTab == MainTab.ADMIN,
-      onClick = { onSelectTab(MainTab.ADMIN) },
-      modifier = Modifier.testTag("rail_admin"),
-      icon = {
-        Icon(
-          imageVector =
-            if (currentTab == MainTab.ADMIN) Icons.Rounded.Tune else Icons.Outlined.Tune,
-          contentDescription = stringResource(R.string.nav_admin),
-        )
       },
       label = { Text(stringResource(R.string.nav_admin), maxLines = 1) },
       colors = itemColors,

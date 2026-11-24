@@ -2,6 +2,7 @@
     <string name="app_name">Mis Finanzas</string>
     <string name="nav_capturar">Capturar</string>
     <string name="nav_saldos">Saldos</string>
+    <string name="nav_presupuesto">Presupuesto</string>
     <string name="nav_programados">Program.</string>
     <string name="nav_admin">Admin</string>
     <string name="tipo_gasto">Gasto</string>

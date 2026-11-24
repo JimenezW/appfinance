@@ -155,12 +155,66 @@ object SyncEntityTypes {
   const val ACCOUNT = "ACCOUNT"
   const val MERCHANT = "MERCHANT"
   const val SCHEDULED_RULE = "SCHEDULED_RULE"
+  const val BUDGET = "BUDGET"
+  const val BUDGET_ITEM = "BUDGET_ITEM"
 }
 
 object SyncOperations {
   const val UPSERT = "UPSERT"
   const val DELETE = "DELETE"
 }
+
+@Entity(
+  tableName = "budgets",
+  indices = [Index(value = ["fiscalPeriodKey"], unique = true), Index("deletedAtMillis")],
+)
+data class BudgetEntity(
+  @PrimaryKey val id: String,
+  val fiscalPeriodKey: String,
+  val expectedIncomeCents: Long? = null,
+  val savingsGoalCents: Long? = null,
+  val globalExpenseLimitCents: Long? = null,
+  val notes: String? = null,
+  val isDefault: Boolean = false,
+  val createdAtMillis: Long = System.currentTimeMillis(),
+  val updatedAtMillis: Long = createdAtMillis,
+  val deletedAtMillis: Long? = null,
+)
+
+@Entity(
+  tableName = "budget_items",
+  foreignKeys =
+    [
+      ForeignKey(
+        entity = BudgetEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["budgetId"],
+        onDelete = ForeignKey.CASCADE,
+      )
+    ],
+  indices =
+    [
+      Index("budgetId"),
+      Index("fiscalPeriodKey"),
+      Index("classificationId"),
+      Index("deletedAtMillis"),
+    ],
+)
+data class BudgetItemEntity(
+  @PrimaryKey val id: String,
+  val budgetId: String,
+  val fiscalPeriodKey: String,
+  val classificationId: String,
+  val detailId: String? = null,
+  val amountCents: Long,
+  val warningThresholdPercent: Int = 80,
+  val rolloverEnabled: Boolean = false,
+  val rolloverCapCents: Long? = null,
+  val isDefault: Boolean = false,
+  val createdAtMillis: Long = System.currentTimeMillis(),
+  val updatedAtMillis: Long = createdAtMillis,
+  val deletedAtMillis: Long? = null,
+)
 
 @Entity(
   tableName = "finance_transactions",

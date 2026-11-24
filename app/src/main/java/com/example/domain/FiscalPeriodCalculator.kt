@@ -67,6 +67,17 @@ object FiscalPeriodCalculator {
     return epochDayToYmd(epochDay).day >= 15
   }
 
+  /**
+   * Returns the inclusive [startEpochDay, endEpochDay] for a fiscal period with 15th-day cutoff:
+   * day 15 of previous month through day 14 of the period's month.
+   */
+  fun periodDateRange(period: FiscalPeriod): Pair<Long, Long> {
+    val prev = period.previous()
+    val start = ymdToEpochDay(prev.year, prev.month, 15)
+    val end = ymdToEpochDay(period.year, period.month, 14)
+    return start to end
+  }
+
   fun todayEpochDay(): Long {
     val cal = Calendar.getInstance()
     return ymdToEpochDay(

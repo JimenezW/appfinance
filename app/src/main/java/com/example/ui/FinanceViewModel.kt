@@ -42,7 +42,7 @@ import kotlinx.coroutines.launch
 enum class MainTab {
   CAPTURAR,
   SALDOS,
-  PROGRAMADOS,
+  PRESUPUESTO,
   ADMIN,
 }
 
@@ -122,6 +122,8 @@ data class FinanceUiState(
   val allMerchants: List<MerchantEntity> = emptyList(),
   val allScheduledRules: List<ScheduledRuleEntity> = emptyList(),
   val allTransactions: List<FinanceTransactionEntity> = emptyList(),
+  val allBudgets: List<com.example.data.local.BudgetEntity> = emptyList(),
+  val allBudgetItems: List<com.example.data.local.BudgetItemEntity> = emptyList(),
   val selectedPeriod: FiscalPeriod =
     FiscalPeriodCalculator.computeFiscalPeriod(FiscalPeriodCalculator.todayEpochDay()),
   val selectedAccountFilterId: String? = null,
@@ -634,6 +636,59 @@ data class FinanceUiState(
             )
           } else null
         }
+    }
+
+  val selectedPeriodBudgetSummary: com.example.domain.BudgetPeriodSummary by
+    lazy(LazyThreadSafetyMode.NONE) {
+      com.example.domain.BudgetEngine.evaluatePeriod(
+        period = selectedPeriod,
+        budgets = allBudgets,
+        budgetItems = allBudgetItems,
+        transactions = allTransactions,
+        classifications = allClassifications,
+        details = allDetails,
+        scheduledRules = allScheduledRules,
+      )
+    }
+
+  val captureBudgetImpact: com.example.domain.BudgetImpactPreview? by
+    lazy(LazyThreadSafetyMode.NONE) {
+      if (!TransactionTypes.isExpense(capture.typeId) || capture.amountCents <= 0L) {
+        return@lazy null
+      }
+      val capturePeriod = capture.fiscalPeriod
+      val summary =
+        if (capturePeriod.key == selectedPeriod.key) {
+          selectedPeriodBudgetSummary
+        } else {
+          com.example.domain.BudgetEngine.evaluatePeriod(
+            period = capturePeriod,
+            budgets = allBudgets,
+            budgetItems = allBudgetItems,
+            transactions = allTransactions,
+            classifications = allClassifications,
+            details = allDetails,
+            scheduledRules = allScheduledRules,
+          )
+        }
+      com.example.domain.BudgetEngine.computeImpactPreview(
+        typeId = capture.typeId,
+        classificationId = effectiveClassificationId,
+        detailId = effectiveDetailId,
+        amountCents = capture.amountCents,
+        summary = summary,
+      )
+    }
+
+  val selectedPeriodBudgetSuggestions: com.example.domain.BudgetSuggestionsResult by
+    lazy(LazyThreadSafetyMode.NONE) {
+      com.example.domain.BudgetEngine.computeSuggestions(
+        referencePeriod = selectedPeriod,
+        transactions = allTransactions,
+        classifications = allClassifications,
+        details = allDetails,
+        lookbackPeriods = 3,
+      )
     }
 }
 
@@ -1549,6 +1604,121 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       selectedAccountFilterId.value = null
       searchQuery.value = ""
       _snackbarMessages.tryEmit("Catálogos restablecidos y movimientos limpiados")
+    }
+  }
+
+  // --- Budgets ---
+  fun saveBudgetCategoryConfig(
+    classificationId: String,
+    baseAmountCents: Long,
+    warningThresholdPercent: Int,
+    rolloverEnabled: Boolean,
+    rolloverCapCents: Long?,
+    subLimitsByDetailId: Map<String, Long>,
+  ) {
+    if (baseAmountCents <= 0L) {
+      _snackbarMessages.tryEmit("El límite base debe ser mayor a $0.00")
+      return
+    }
+    val validation =
+      com.example.domain.BudgetEngine.validateSubLimits(baseAmountCents, subLimitsByDetailId.values)
+    if (!validation.isValid) {
+      _snackbarMessages.tryEmit("La suma de sub-límites excede el límite base")
+      return
+    }
+    val state = uiState.value
+    val periodKey = state.selectedPeriod.key
+    val summary = state.selectedPeriodBudgetSummary
+    viewModelScope.launch {
+      repository.saveBudgetCategoryConfig(
+        fiscalPeriodKey = periodKey,
+        baselineSummary = summary,
+        classificationId = classificationId,
+        baseAmountCents = baseAmountCents,
+        warningThresholdPercent = warningThresholdPercent,
+        rolloverEnabled = rolloverEnabled,
+        rolloverCapCents = rolloverCapCents,
+        subLimitsByDetailId = subLimitsByDetailId,
+      )
+      _snackbarMessages.tryEmit("Presupuesto actualizado para ${state.selectedPeriod.label}")
+    }
+  }
+
+  fun deleteBudgetCategory(classificationId: String) {
+    val state = uiState.value
+    val periodKey = state.selectedPeriod.key
+    val summary = state.selectedPeriodBudgetSummary
+    viewModelScope.launch {
+      repository.deleteBudgetCategory(
+        fiscalPeriodKey = periodKey,
+        baselineSummary = summary,
+        classificationId = classificationId,
+      )
+      _snackbarMessages.tryEmit("Categoría eliminada del presupuesto")
+    }
+  }
+
+  fun saveBudgetHeader(
+    expectedIncomeCents: Long?,
+    savingsGoalCents: Long?,
+    globalExpenseLimitCents: Long?,
+    notes: String?,
+  ) {
+    val state = uiState.value
+    val periodKey = state.selectedPeriod.key
+    val summary = state.selectedPeriodBudgetSummary
+    viewModelScope.launch {
+      repository.saveBudgetHeader(
+        fiscalPeriodKey = periodKey,
+        baselineSummary = summary,
+        expectedIncomeCents = expectedIncomeCents?.takeIf { it > 0L },
+        savingsGoalCents = savingsGoalCents?.takeIf { it > 0L },
+        globalExpenseLimitCents = globalExpenseLimitCents?.takeIf { it > 0L },
+        notes = notes,
+      )
+      _snackbarMessages.tryEmit("Metas del periodo ${state.selectedPeriod.label} guardadas")
+    }
+  }
+
+  fun clonePreviousPeriodBudget() {
+    val state = uiState.value
+    val targetPeriod = state.selectedPeriod
+    val sourcePeriod = targetPeriod.previous()
+    val sourceSummary =
+      com.example.domain.BudgetEngine.evaluatePeriod(
+        period = sourcePeriod,
+        budgets = state.allBudgets,
+        budgetItems = state.allBudgetItems,
+        transactions = state.allTransactions,
+        classifications = state.allClassifications,
+        details = state.allDetails,
+        scheduledRules = state.allScheduledRules,
+      )
+    if (sourceSummary.categories.isEmpty()) {
+      _snackbarMessages.tryEmit("No hay rubros en ${sourcePeriod.label} para clonar")
+      return
+    }
+    viewModelScope.launch {
+      val count = repository.cloneBudgetFromSummary(targetPeriod.key, sourceSummary)
+      _snackbarMessages.tryEmit("Clonados $count rubros desde ${sourcePeriod.label}")
+    }
+  }
+
+  fun applyBudgetSuggestions() {
+    val state = uiState.value
+    val suggestions = state.selectedPeriodBudgetSuggestions
+    if (suggestions.categories.isEmpty()) {
+      _snackbarMessages.tryEmit("Sin gastos históricos en los últimos 3 periodos cerrados")
+      return
+    }
+    viewModelScope.launch {
+      val count =
+        repository.applyBudgetSuggestions(
+          targetPeriodKey = state.selectedPeriod.key,
+          baselineSummary = state.selectedPeriodBudgetSummary,
+          suggestions = suggestions.categories,
+        )
+      _snackbarMessages.tryEmit("Aplicadas $count sugerencias basadas en los últimos 3 periodos")
     }
   }
 

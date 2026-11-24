@@ -303,6 +303,10 @@ fun CaptureScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
           ) {
+            state.captureBudgetImpact?.let { impact ->
+              CaptureBudgetImpactBanner(impact = impact)
+            }
+
             SaveTransactionButton(
               typeId = state.capture.typeId,
               amountCents = state.capture.amountCents,
@@ -1488,6 +1492,86 @@ private fun MerchantPickerBottomSheet(
             }
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+private fun CaptureBudgetImpactBanner(
+  impact: com.example.domain.BudgetImpactPreview,
+  modifier: Modifier = Modifier,
+) {
+  val financeColors = LocalFinanceColors.current
+  val isExceeded = impact.alertStatus == com.example.domain.BudgetAlertStatus.EXCEEDED
+  val isWarning = impact.alertStatus == com.example.domain.BudgetAlertStatus.WARNING
+
+  val bgColor =
+    when {
+      isExceeded -> financeColors.expenseContainer
+      isWarning -> financeColors.pendingContainer
+      else -> financeColors.incomeContainer
+    }
+  val borderColor =
+    when {
+      isExceeded -> financeColors.expenseAccent
+      isWarning -> financeColors.pendingAccent
+      else -> financeColors.incomeAccent
+    }
+  val textColor =
+    when {
+      isExceeded -> financeColors.onExpenseContainer
+      isWarning -> financeColors.onPendingContainer
+      else -> financeColors.onIncomeContainer
+    }
+
+  val pctInt = kotlin.math.round(impact.consumedPercent).toInt()
+  val mainMessage =
+    if (isExceeded) {
+      val excess = kotlin.math.abs(impact.remainingCents)
+      "Este gasto sobrepasará el presupuesto de ${impact.classificationName} por ${FiscalPeriodCalculator.formatMxn(excess)} ($pctInt% consumido)"
+    } else {
+      "Quedarán ${FiscalPeriodCalculator.formatMxn(impact.remainingCents)} en ${impact.classificationName} ($pctInt% consumido con este gasto)"
+    }
+
+  Surface(
+    shape = RoundedCornerShape(12.dp),
+    color = bgColor,
+    border = BorderStroke(1.dp, borderColor.copy(alpha = 0.65f)),
+    modifier = modifier.fillMaxWidth().testTag("capture_budget_impact_banner"),
+  ) {
+    Column(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+      verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      Text(
+        text =
+          if (isExceeded) "Impacto Presupuestario • Sobregiro"
+          else if (isWarning) "Impacto Presupuestario • En Alerta"
+          else "Impacto Presupuestario en Vivo",
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        color = borderColor,
+      )
+      Text(
+        text = mainMessage,
+        style = MaterialTheme.typography.bodySmall,
+        fontWeight = FontWeight.Medium,
+        color = textColor,
+      )
+      impact.subLimit?.let { sub ->
+        val subPct = kotlin.math.round(sub.consumedPercent).toInt()
+        val subMsg =
+          if (sub.alertStatus == com.example.domain.BudgetAlertStatus.EXCEEDED) {
+            "Sub-límite ${sub.detailName}: excedido por ${FiscalPeriodCalculator.formatMxn(kotlin.math.abs(sub.remainingCents))} ($subPct%)"
+          } else {
+            "Sub-límite ${sub.detailName}: restan ${FiscalPeriodCalculator.formatMxn(sub.remainingCents)} ($subPct%)"
+          }
+        Text(
+          text = subMsg,
+          style = MaterialTheme.typography.labelSmall,
+          color = textColor.copy(alpha = 0.85f),
+        )
       }
     }
   }

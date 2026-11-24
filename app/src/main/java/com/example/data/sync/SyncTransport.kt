@@ -36,6 +36,19 @@ interface SyncTransport {
     endpointUrl: String,
     authContext: DeviceAuthContext,
   ): SyncTransportResult
+
+  suspend fun putJson(
+    endpointUrl: String,
+    jsonPayload: String,
+    authContext: DeviceAuthContext,
+  ): SyncTransportResult =
+    SyncTransportResult.Failure(message = "PUT no implementado en este transporte")
+
+  suspend fun deleteJson(
+    endpointUrl: String,
+    authContext: DeviceAuthContext,
+  ): SyncTransportResult =
+    SyncTransportResult.Failure(message = "DELETE no implementado en este transporte")
 }
 
 object SyncUrlHelper {
@@ -57,6 +70,26 @@ object SyncUrlHelper {
 
   fun adminConfigUrl(rawUrl: String): String =
     "${normalizeBaseUrl(rawUrl)}/api/v1/catalogs/admin-config"
+
+  fun budgetPeriodUrl(rawUrl: String, fiscalPeriodKey: String): String =
+    "${normalizeBaseUrl(rawUrl)}/api/v1/budgets/$fiscalPeriodKey"
+
+  fun budgetCloneUrl(rawUrl: String, fiscalPeriodKey: String): String =
+    "${normalizeBaseUrl(rawUrl)}/api/v1/budgets/$fiscalPeriodKey/clone"
+
+  fun budgetSuggestionsUrl(
+    rawUrl: String,
+    referencePeriodKey: String,
+    lookbackPeriods: Int = 3,
+  ): String =
+    "${normalizeBaseUrl(rawUrl)}/api/v1/budgets/suggestions?lookbackPeriods=$lookbackPeriods&referencePeriodKey=$referencePeriodKey"
+
+  fun budgetHistoryUrl(
+    rawUrl: String,
+    endPeriodKey: String,
+    months: Int = 6,
+  ): String =
+    "${normalizeBaseUrl(rawUrl)}/api/v1/budgets/history?months=$months&endPeriodKey=$endPeriodKey"
 }
 
 class OkHttpSyncTransport(
@@ -128,6 +161,57 @@ class OkHttpSyncTransport(
         Request.Builder()
           .url(trimmedUrl)
           .get()
+          .header("Accept", "application/json")
+          .header("X-Client-App", "MisFinanzas-Android")
+          .header("X-Schema-Version", ApiJsonBuilder.SCHEMA_VERSION)
+          .build()
+
+      executeSigned(clientFor(authContext), request)
+    }
+
+  override suspend fun putJson(
+    endpointUrl: String,
+    jsonPayload: String,
+    authContext: DeviceAuthContext,
+  ): SyncTransportResult =
+    withContext(Dispatchers.IO) {
+      val trimmedUrl = endpointUrl.trim()
+      if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+        return@withContext SyncTransportResult.Failure(
+          message = "La URL del API debe iniciar con http:// o https://"
+        )
+      }
+
+      val mediaType = "application/json; charset=utf-8".toMediaType()
+      val request =
+        Request.Builder()
+          .url(trimmedUrl)
+          .put(jsonPayload.toRequestBody(mediaType))
+          .header("Accept", "application/json")
+          .header("Content-Type", "application/json; charset=utf-8")
+          .header("X-Client-App", "MisFinanzas-Android")
+          .header("X-Schema-Version", ApiJsonBuilder.SCHEMA_VERSION)
+          .build()
+
+      executeSigned(clientFor(authContext), request)
+    }
+
+  override suspend fun deleteJson(
+    endpointUrl: String,
+    authContext: DeviceAuthContext,
+  ): SyncTransportResult =
+    withContext(Dispatchers.IO) {
+      val trimmedUrl = endpointUrl.trim()
+      if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+        return@withContext SyncTransportResult.Failure(
+          message = "La URL del API debe iniciar con http:// o https://"
+        )
+      }
+
+      val request =
+        Request.Builder()
+          .url(trimmedUrl)
+          .delete()
           .header("Accept", "application/json")
           .header("X-Client-App", "MisFinanzas-Android")
           .header("X-Schema-Version", ApiJsonBuilder.SCHEMA_VERSION)

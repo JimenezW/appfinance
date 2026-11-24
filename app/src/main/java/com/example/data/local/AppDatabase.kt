@@ -24,8 +24,10 @@ import kotlinx.coroutines.launch
       FinanceTransactionEntity::class,
       SyncQueueItemEntity::class,
       SyncSettingsEntity::class,
+      BudgetEntity::class,
+      BudgetItemEntity::class,
     ],
-  version = 4,
+  version = 5,
   exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -536,6 +538,66 @@ abstract class AppDatabase : RoomDatabase() {
         }
       }
 
+    val MIGRATION_4_5: Migration =
+      object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+          db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS budgets (
+              id TEXT NOT NULL PRIMARY KEY,
+              fiscalPeriodKey TEXT NOT NULL,
+              expectedIncomeCents INTEGER,
+              savingsGoalCents INTEGER,
+              globalExpenseLimitCents INTEGER,
+              notes TEXT,
+              isDefault INTEGER NOT NULL,
+              createdAtMillis INTEGER NOT NULL,
+              updatedAtMillis INTEGER NOT NULL,
+              deletedAtMillis INTEGER
+            )
+            """.trimIndent()
+          )
+          db.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS index_budgets_fiscalPeriodKey ON budgets(fiscalPeriodKey)"
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_budgets_deletedAtMillis ON budgets(deletedAtMillis)"
+          )
+          db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS budget_items (
+              id TEXT NOT NULL PRIMARY KEY,
+              budgetId TEXT NOT NULL,
+              fiscalPeriodKey TEXT NOT NULL,
+              classificationId TEXT NOT NULL,
+              detailId TEXT,
+              amountCents INTEGER NOT NULL,
+              warningThresholdPercent INTEGER NOT NULL,
+              rolloverEnabled INTEGER NOT NULL,
+              rolloverCapCents INTEGER,
+              isDefault INTEGER NOT NULL,
+              createdAtMillis INTEGER NOT NULL,
+              updatedAtMillis INTEGER NOT NULL,
+              deletedAtMillis INTEGER,
+              FOREIGN KEY(budgetId) REFERENCES budgets(id) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_budget_items_budgetId ON budget_items(budgetId)"
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_budget_items_fiscalPeriodKey ON budget_items(fiscalPeriodKey)"
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_budget_items_classificationId ON budget_items(classificationId)"
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS index_budget_items_deletedAtMillis ON budget_items(deletedAtMillis)"
+          )
+        }
+      }
+
     fun getInstance(context: Context): AppDatabase {
       return INSTANCE
         ?: synchronized(this) {
@@ -545,7 +607,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 "mis_finanzas.db",
               )
-              .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+              .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
               .addCallback(
                 object : Callback() {
                   override fun onCreate(db: SupportSQLiteDatabase) {

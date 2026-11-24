@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -82,6 +83,7 @@ fun ScheduledScreen(
   onToggleRuleActive: (ScheduledRuleEntity) -> Unit,
   onSaveRule: (ScheduledRuleEntity) -> Unit,
   onDeleteRule: (ScheduledRuleEntity) -> Unit,
+  onBack: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val financeColors = LocalFinanceColors.current
@@ -95,10 +97,27 @@ fun ScheduledScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     item {
-      Text(
-        text = "Movimientos Programados",
-        style = MaterialTheme.typography.titleLarge,
-      )
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        if (onBack != null) {
+          IconButton(
+            onClick = onBack,
+            modifier = Modifier.size(36.dp).testTag("scheduled_back_to_admin_btn"),
+          ) {
+            Icon(
+              imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+              contentDescription = "Volver a Administración",
+            )
+          }
+        }
+        Text(
+          text = if (onBack != null) "Reglas Recurrentes" else "Movimientos Programados",
+          style = MaterialTheme.typography.titleLarge,
+        )
+      }
     }
 
     item {
