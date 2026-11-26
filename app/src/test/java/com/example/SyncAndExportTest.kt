@@ -499,4 +499,74 @@ class SyncAndExportTest {
     assertFalse(budgetItemJson.has("updatedAtMillis"))
     assertEquals(150_000L, budgetItemJson.getLong("amountCents"))
   }
+
+  @Test
+  fun financialStatementPdfDownload_buildsContractUrlAndRetriesOnReplay() = runTest {
+    val expectedUrl =
+      com.example.data.sync.SyncUrlHelper.financialReportPdfUrl(
+        rawUrl = "https://soon-diamonds-writing-hundred.trycloudflare.com/api/v1",
+        periodKey = "2026-11",
+      )
+    assertEquals(
+      "https://soon-diamonds-writing-hundred.trycloudflare.com/api/v1/reports/financial.pdf?periodKey=2026-11&includeBudgetSuggestions=true&includeTransactions=true",
+      expectedUrl,
+    )
+
+    var calls = 0
+    var capturedUrl: String? = null
+    var capturedAccept: String? = null
+    val pdfSample = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n".toByteArray(Charsets.US_ASCII)
+
+    val fakeTransport =
+      object : SyncTransport {
+        override suspend fun postJson(
+          endpointUrl: String,
+          jsonPayload: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+          idempotencyKey: String?,
+        ): SyncTransportResult = SyncTransportResult.Success(200, """{"success":true}""")
+
+        override suspend fun getJson(
+          endpointUrl: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+        ): SyncTransportResult = SyncTransportResult.Success(200, """{"success":true}""")
+
+        override suspend fun getBinary(
+          endpointUrl: String,
+          acceptMimeType: String,
+          authContext: com.example.data.security.DeviceAuthContext,
+        ): com.example.data.sync.BinaryDownloadResult {
+          calls++
+          capturedUrl = endpointUrl
+          capturedAccept = acceptMimeType
+          return if (calls == 1) {
+            com.example.data.sync.BinaryDownloadResult.Failure(
+              httpCode = 401,
+              errorCode = "REPLAY_DETECTED",
+              message = "Replay",
+            )
+          } else {
+            com.example.data.sync.BinaryDownloadResult.Success(
+              httpCode = 200,
+              bytes = pdfSample,
+              fileName = "MisFinanzas_EstadoCuenta_2026-11.pdf",
+              sha256 = "abc123",
+              pages = 4,
+            )
+          }
+        }
+      }
+
+    val syncManager = SyncManager(dao = db.financeDao(), transport = fakeTransport)
+    val result = syncManager.downloadFinancialStatementPdf(periodKey = "2026-11")
+
+    assertEquals(2, calls)
+    assertEquals(expectedUrl, capturedUrl)
+    assertEquals("application/pdf", capturedAccept)
+    assertTrue(result is com.example.data.sync.BinaryDownloadResult.Success)
+    val success = result as com.example.data.sync.BinaryDownloadResult.Success
+    assertEquals("MisFinanzas_EstadoCuenta_2026-11.pdf", success.fileName)
+    assertEquals(4, success.pages)
+    assertEquals(pdfSample.size, success.bytes.size)
+  }
 }

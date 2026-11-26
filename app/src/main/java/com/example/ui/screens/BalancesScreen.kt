@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.ReceiptLong
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -89,6 +91,8 @@ fun BalancesScreen(
   onToggleAccountFilter: (String) -> Unit,
   onSearchQueryChange: (String) -> Unit,
   onToggleSortDateOrder: () -> Unit = {},
+  isDownloadingStatement: Boolean = false,
+  onDownloadStatement: () -> Unit = {},
   onToggleStatsIncome: (Boolean) -> Unit,
   onUpdateTransaction: (FinanceTransactionEntity, FinanceTransactionEntity) -> Unit,
   onDeleteTransaction: (FinanceTransactionEntity) -> Unit,
@@ -139,6 +143,48 @@ fun BalancesScreen(
           periodIncomeCents = state.periodIncomeCents,
           periodExpenseCents = state.periodExpenseCents,
         )
+      }
+
+      // Download Financial Statement PDF button
+      item {
+        OutlinedButton(
+          onClick = onDownloadStatement,
+          enabled = !isDownloadingStatement,
+          modifier =
+            Modifier.fillMaxWidth()
+              .height(46.dp)
+              .testTag("download_statement_pdf_btn"),
+          shape = RoundedCornerShape(12.dp),
+          border = BorderStroke(1.dp, financeColors.periodAccent.copy(alpha = 0.45f)),
+        ) {
+          if (isDownloadingStatement) {
+            CircularProgressIndicator(
+              modifier = Modifier.size(18.dp),
+              strokeWidth = 2.dp,
+              color = financeColors.periodAccent,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "Generando estado de cuenta...",
+              style = MaterialTheme.typography.labelLarge,
+              fontWeight = FontWeight.SemiBold,
+            )
+          } else {
+            Icon(
+              imageVector = Icons.Rounded.Download,
+              contentDescription = "Descargar estado de cuenta",
+              modifier = Modifier.size(18.dp),
+              tint = financeColors.periodAccent,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "Descargar estado de cuenta (${state.selectedPeriod.label})",
+              style = MaterialTheme.typography.labelLarge,
+              fontWeight = FontWeight.SemiBold,
+              color = financeColors.periodAccent,
+            )
+          }
+        }
       }
 
       // Balances by Account Horizontal Cards

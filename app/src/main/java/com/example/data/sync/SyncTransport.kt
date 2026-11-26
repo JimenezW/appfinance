@@ -24,6 +24,22 @@ sealed interface SyncTransportResult {
   ) : SyncTransportResult
 }
 
+sealed interface BinaryDownloadResult {
+  data class Success(
+    val httpCode: Int,
+    val bytes: ByteArray,
+    val fileName: String,
+    val sha256: String? = null,
+    val pages: Int? = null,
+  ) : BinaryDownloadResult
+
+  data class Failure(
+    val httpCode: Int? = null,
+    val errorCode: String? = null,
+    val message: String,
+  ) : BinaryDownloadResult
+}
+
 interface SyncTransport {
   suspend fun postJson(
     endpointUrl: String,
@@ -36,6 +52,13 @@ interface SyncTransport {
     endpointUrl: String,
     authContext: DeviceAuthContext,
   ): SyncTransportResult
+
+  suspend fun getBinary(
+    endpointUrl: String,
+    acceptMimeType: String = "application/pdf",
+    authContext: DeviceAuthContext,
+  ): BinaryDownloadResult =
+    BinaryDownloadResult.Failure(message = "Descarga binaria no implementada en este transporte")
 
   suspend fun putJson(
     endpointUrl: String,
@@ -70,6 +93,14 @@ object SyncUrlHelper {
 
   fun adminConfigUrl(rawUrl: String): String =
     "${normalizeBaseUrl(rawUrl)}/api/v1/catalogs/admin-config"
+
+  fun financialReportPdfUrl(
+    rawUrl: String,
+    periodKey: String,
+    includeBudgetSuggestions: Boolean = true,
+    includeTransactions: Boolean = true,
+  ): String =
+    "${normalizeBaseUrl(rawUrl)}/api/v1/reports/financial.pdf?periodKey=$periodKey&includeBudgetSuggestions=$includeBudgetSuggestions&includeTransactions=$includeTransactions"
 
   fun budgetPeriodUrl(rawUrl: String, fiscalPeriodKey: String): String =
     "${normalizeBaseUrl(rawUrl)}/api/v1/budgets/$fiscalPeriodKey"
@@ -168,6 +199,84 @@ class OkHttpSyncTransport(
 
       executeSigned(clientFor(authContext), request)
     }
+
+  override suspend fun getBinary(
+    endpointUrl: String,
+    acceptMimeType: String,
+    authContext: DeviceAuthContext,
+  ): BinaryDownloadResult =
+    withContext(Dispatchers.IO) {
+      val trimmedUrl = endpointUrl.trim()
+      if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://")) {
+        return@withContext BinaryDownloadResult.Failure(
+          message = "La URL del API debe iniciar con http:// o https://"
+        )
+      }
+
+      val request =
+        Request.Builder()
+          .url(trimmedUrl)
+          .get()
+          .header("Accept", acceptMimeType)
+          .header("X-Client-App", "MisFinanzas-Android")
+          .header("X-Schema-Version", ApiJsonBuilder.SCHEMA_VERSION)
+          .build()
+
+      val downloadClient =
+        clientFor(authContext).newBuilder().readTimeout(45, TimeUnit.SECONDS).build()
+
+      try {
+        downloadClient.newCall(request).execute().use { response ->
+          if (response.isSuccessful) {
+            val bytes = response.body?.bytes() ?: ByteArray(0)
+            if (bytes.isEmpty()) {
+              return@withContext BinaryDownloadResult.Failure(
+                httpCode = response.code,
+                message = "El servidor devolvió un archivo PDF vacío",
+              )
+            }
+            val fileName =
+              parseFileNameFromContentDisposition(response.header("Content-Disposition"))
+                ?: "MisFinanzas_EstadoCuenta.pdf"
+            val sha256 = response.header("X-Report-Sha256")?.takeIf { it.isNotBlank() }
+            val pages = response.header("X-Report-Pages")?.toIntOrNull()
+            BinaryDownloadResult.Success(
+              httpCode = response.code,
+              bytes = bytes,
+              fileName = fileName,
+              sha256 = sha256,
+              pages = pages,
+            )
+          } else {
+            val body = response.body?.string().orEmpty()
+            val parsedError = parseBackendError(body)
+            BinaryDownloadResult.Failure(
+              httpCode = response.code,
+              errorCode = parsedError?.first,
+              message =
+                parsedError?.second
+                  ?: "HTTP ${response.code}: ${response.message.ifBlank { "Error del servidor" }}",
+            )
+          }
+        }
+      } catch (e: IOException) {
+        BinaryDownloadResult.Failure(
+          message = "Sin respuesta del API (${e.message ?: "Error de red"})"
+        )
+      } catch (e: IllegalArgumentException) {
+        BinaryDownloadResult.Failure(message = "URL del API inválida: ${e.message}")
+      } catch (e: Exception) {
+        BinaryDownloadResult.Failure(
+          message = "Error al descargar el estado de cuenta: ${e.message ?: "desconocido"}"
+        )
+      }
+    }
+
+  private fun parseFileNameFromContentDisposition(headerValue: String?): String? {
+    if (headerValue.isNullOrBlank()) return null
+    val match = Regex("""filename="?([^";]+)"?""", RegexOption.IGNORE_CASE).find(headerValue)
+    return match?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
+  }
 
   override suspend fun putJson(
     endpointUrl: String,

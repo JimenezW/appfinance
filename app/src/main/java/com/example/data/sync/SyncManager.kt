@@ -826,4 +826,51 @@ class SyncManager(
       }
     _runtimeStatus.value = next
   }
+
+  /**
+   * Downloads the financial statement PDF for the given fiscal period (YYYY-MM) from
+   * GET /api/v1/reports/financial.pdf with DeviceSignatureAuth and single REPLAY_DETECTED retry.
+   */
+  suspend fun downloadFinancialStatementPdf(
+    periodKey: String,
+    includeBudgetSuggestions: Boolean = true,
+    includeTransactions: Boolean = true,
+  ): BinaryDownloadResult {
+    val settings = ensureDeviceSettings()
+    if (settings.isDeviceRevoked) {
+      return BinaryDownloadResult.Failure(
+        httpCode = 403,
+        errorCode = "DEVICE_REVOKED",
+        message = "Dispositivo revocado por el servidor.",
+      )
+    }
+    if (settings.apiEndpointUrl.isBlank()) {
+      return BinaryDownloadResult.Failure(
+        message = "Configura la URL del API en Administración para descargar el estado de cuenta."
+      )
+    }
+    val url =
+      SyncUrlHelper.financialReportPdfUrl(
+        rawUrl = settings.apiEndpointUrl,
+        periodKey = periodKey,
+        includeBudgetSuggestions = includeBudgetSuggestions,
+        includeTransactions = includeTransactions,
+      )
+    val auth = authContextFrom(settings)
+    var result =
+      transport.getBinary(
+        endpointUrl = url,
+        acceptMimeType = "application/pdf",
+        authContext = auth,
+      )
+    if (result is BinaryDownloadResult.Failure && result.errorCode == "REPLAY_DETECTED") {
+      result =
+        transport.getBinary(
+          endpointUrl = url,
+          acceptMimeType = "application/pdf",
+          authContext = auth,
+        )
+    }
+    return result
+  }
 }

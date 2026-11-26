@@ -159,8 +159,44 @@ fun MisFinanzasApp(
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
   val state by viewModel.uiState.collectAsStateWithLifecycle()
+  val isDownloadingStatement by viewModel.isDownloadingStatement.collectAsStateWithLifecycle()
   val snackbarHostState = remember { SnackbarHostState() }
   var minSplashElapsed by remember { mutableStateOf(false) }
+  var pendingStatementPdfBytes by remember { mutableStateOf<ByteArray?>(null) }
+
+  val openPdfUri: (android.net.Uri) -> Unit = { uri ->
+    runCatching {
+      val intent =
+        android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+          setDataAndType(uri, "application/pdf")
+          addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+      context.startActivity(intent)
+    }
+  }
+
+  val saveStatementPdfLauncher =
+    androidx.activity.compose.rememberLauncherForActivityResult(
+      androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+      val bytes = pendingStatementPdfBytes
+      pendingStatementPdfBytes = null
+      if (uri != null && bytes != null) {
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { stream ->
+              stream.write(bytes)
+              stream.flush()
+            }
+          }
+          .onSuccess {
+            viewModel.notifyMessage("Estado de cuenta PDF guardado correctamente")
+            openPdfUri(uri)
+          }
+          .onFailure {
+            viewModel.notifyMessage("No se pudo guardar el estado de cuenta PDF")
+          }
+      }
+    }
 
   LaunchedEffect(Unit) {
     delay(950L)
@@ -279,6 +315,16 @@ fun MisFinanzasApp(
                       onToggleAccountFilter = viewModel::toggleAccountFilter,
                       onSearchQueryChange = viewModel::setSearchQuery,
                       onToggleSortDateOrder = viewModel::toggleTransactionDateSort,
+                      isDownloadingStatement = isDownloadingStatement,
+                      onDownloadStatement = {
+                        viewModel.downloadStatementPdfForSelectedPeriod(
+                          onFallbackCreateDocument = { fileName, bytes ->
+                            pendingStatementPdfBytes = bytes
+                            saveStatementPdfLauncher.launch(fileName)
+                          },
+                          onSavedUri = openPdfUri,
+                        )
+                      },
                       onToggleStatsIncome = viewModel::setStatsShowIncome,
                       onUpdateTransaction = viewModel::updateExistingTransaction,
                       onDeleteTransaction = viewModel::deleteExistingTransaction,
