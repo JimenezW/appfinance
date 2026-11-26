@@ -366,6 +366,106 @@ object ApiJsonBuilder {
         txUpsertsArray.put(syncTransactionJson(tx))
       }
 
+    fun optNullableNonNegLong(obj: JSONObject, key: String): Any =
+      if (obj.isNull(key) || !obj.has(key)) JSONObject.NULL else obj.optLong(key, 0L).coerceAtLeast(0L)
+
+    fun optNullableString(obj: JSONObject, key: String): Any =
+      if (obj.isNull(key) || !obj.has(key)) JSONObject.NULL else obj.optString(key)
+
+    fun sanitizeClassificationForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("typeId", parsed.optString("typeId"))
+        put("name", parsed.optString("name"))
+        put("sortOrder", parsed.optInt("sortOrder", 0).coerceAtLeast(0))
+        put("isActive", parsed.optBoolean("isActive", true))
+        put("isPinned", parsed.optBoolean("isPinned", false))
+        put("monthlyBudgetCents", optNullableNonNegLong(parsed, "monthlyBudgetCents"))
+        put("default", parsed.optBoolean("default", false))
+      }
+
+    fun sanitizeDetailForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("classificationId", parsed.optString("classificationId"))
+        put("name", parsed.optString("name"))
+        put("sortOrder", parsed.optInt("sortOrder", 0).coerceAtLeast(0))
+        put("isActive", parsed.optBoolean("isActive", true))
+        put("isPinned", parsed.optBoolean("isPinned", false))
+        put("default", parsed.optBoolean("default", false))
+      }
+
+    fun sanitizeMerchantForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("name", parsed.optString("name"))
+        put("sortOrder", parsed.optInt("sortOrder", 0).coerceAtLeast(0))
+        put("isActive", parsed.optBoolean("isActive", true))
+        put("isPinned", parsed.optBoolean("isPinned", false))
+        put("default", parsed.optBoolean("default", false))
+      }
+
+    fun sanitizeAccountForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("name", parsed.optString("name"))
+        put("shortLabel", parsed.optString("shortLabel", parsed.optString("name")))
+        put("accountKind", parsed.optString("accountKind", "DEBIT"))
+        put("balanceCents", parsed.optLong("balanceCents", 0L))
+        put("currency", parsed.optString("currency", "MXN").ifBlank { "MXN" })
+        put("sortOrder", parsed.optInt("sortOrder", 0).coerceAtLeast(0))
+        put("isActive", parsed.optBoolean("isActive", true))
+        put("isPinned", parsed.optBoolean("isPinned", false))
+        put("default", parsed.optBoolean("default", false))
+      }
+
+    fun sanitizeScheduledRuleForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("title", parsed.optString("title"))
+        put("typeId", parsed.optString("typeId"))
+        put("classificationId", parsed.optString("classificationId"))
+        put("detailId", parsed.optString("detailId"))
+        put("accountId", parsed.optString("accountId"))
+        put("merchantName", optNullableString(parsed, "merchantName"))
+        put("amountCents", parsed.optLong("amountCents", 1L).coerceAtLeast(1L))
+        put("dayOfMonth", parsed.optInt("dayOfMonth", 1).coerceIn(1, 31))
+        put("isEndOfMonth", parsed.optBoolean("isEndOfMonth", false))
+        put("isActive", parsed.optBoolean("isActive", true))
+        put("lastConfirmedPeriodKey", optNullableString(parsed, "lastConfirmedPeriodKey"))
+        put("snoozedUntilEpochDay", optNullableNonNegLong(parsed, "snoozedUntilEpochDay"))
+        put("default", parsed.optBoolean("default", false))
+      }
+
+    fun sanitizeBudgetForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("fiscalPeriodKey", parsed.optString("fiscalPeriodKey"))
+        put("expectedIncomeCents", optNullableNonNegLong(parsed, "expectedIncomeCents"))
+        put(
+          "savingsGoalCents",
+          if (parsed.isNull("savingsGoalCents") || !parsed.has("savingsGoalCents")) 0L
+          else parsed.optLong("savingsGoalCents", 0L).coerceAtLeast(0L),
+        )
+        put("globalExpenseLimitCents", optNullableNonNegLong(parsed, "globalExpenseLimitCents"))
+        put("notes", optNullableString(parsed, "notes"))
+        put("default", parsed.optBoolean("default", false))
+      }
+
+    fun sanitizeBudgetItemForSync(parsed: JSONObject, fallbackId: String): JSONObject =
+      JSONObject().apply {
+        put("id", parsed.optString("id", fallbackId))
+        put("budgetId", parsed.optString("budgetId"))
+        put("fiscalPeriodKey", parsed.optString("fiscalPeriodKey"))
+        put("classificationId", parsed.optString("classificationId"))
+        put("detailId", optNullableString(parsed, "detailId"))
+        put("amountCents", parsed.optLong("amountCents", 0L).coerceAtLeast(0L))
+        put("warningThresholdPercent", parsed.optInt("warningThresholdPercent", 80).coerceIn(1, 99))
+        put("rolloverEnabled", parsed.optBoolean("rolloverEnabled", false))
+        put("rolloverCapCents", optNullableNonNegLong(parsed, "rolloverCapCents"))
+        put("default", parsed.optBoolean("default", false))
+      }
+
     // 2. Process queued transaction deletes and queued admin changes (latest per entity)
     pendingQueueItems.asReversed().forEach { item ->
       if (item.entityType == SyncEntityTypes.TRANSACTION) {
@@ -409,13 +509,20 @@ object ApiJsonBuilder {
         } else {
           val parsed = runCatching { JSONObject(item.payloadJson) }.getOrNull() ?: return@forEach
           when (item.entityType) {
-            SyncEntityTypes.CLASSIFICATION -> classificationsUpserts.put(parsed)
-            SyncEntityTypes.DETAIL -> detailsUpserts.put(parsed)
-            SyncEntityTypes.MERCHANT -> merchantsUpserts.put(parsed)
-            SyncEntityTypes.ACCOUNT -> accountsUpserts.put(parsed)
-            SyncEntityTypes.SCHEDULED_RULE -> scheduledRulesUpserts.put(parsed)
-            SyncEntityTypes.BUDGET -> budgetsUpserts.put(parsed)
-            SyncEntityTypes.BUDGET_ITEM -> budgetItemsUpserts.put(parsed)
+            SyncEntityTypes.CLASSIFICATION ->
+              classificationsUpserts.put(sanitizeClassificationForSync(parsed, item.entityId))
+            SyncEntityTypes.DETAIL ->
+              detailsUpserts.put(sanitizeDetailForSync(parsed, item.entityId))
+            SyncEntityTypes.MERCHANT ->
+              merchantsUpserts.put(sanitizeMerchantForSync(parsed, item.entityId))
+            SyncEntityTypes.ACCOUNT ->
+              accountsUpserts.put(sanitizeAccountForSync(parsed, item.entityId))
+            SyncEntityTypes.SCHEDULED_RULE ->
+              scheduledRulesUpserts.put(sanitizeScheduledRuleForSync(parsed, item.entityId))
+            SyncEntityTypes.BUDGET ->
+              budgetsUpserts.put(sanitizeBudgetForSync(parsed, item.entityId))
+            SyncEntityTypes.BUDGET_ITEM ->
+              budgetItemsUpserts.put(sanitizeBudgetItemForSync(parsed, item.entityId))
           }
         }
       }
