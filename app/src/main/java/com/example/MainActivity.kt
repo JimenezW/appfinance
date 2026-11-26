@@ -275,9 +275,10 @@ fun MisFinanzasApp(
                     BalancesScreen(
                       state = state,
                       onPrevPeriod = viewModel::previousPeriod,
-                      onNextPeriod = viewModel::nextPeriod,
+                      onNextPeriod = viewModel::nextPeriodWithData,
                       onToggleAccountFilter = viewModel::toggleAccountFilter,
                       onSearchQueryChange = viewModel::setSearchQuery,
+                      onToggleSortDateOrder = viewModel::toggleTransactionDateSort,
                       onToggleStatsIncome = viewModel::setStatsShowIncome,
                       onUpdateTransaction = viewModel::updateExistingTransaction,
                       onDeleteTransaction = viewModel::deleteExistingTransaction,
