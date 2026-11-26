@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
@@ -687,6 +688,9 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
   private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
   val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
 
+  private val _isDownloadingStatement = MutableStateFlow(false)
+  val isDownloadingStatement: StateFlow<Boolean> = _isDownloadingStatement.asStateFlow()
+
   private var wasWifiConnected = false
   private var wifiSessionEpoch = 0
   private var lastAutoSyncAttemptKey: String? = null
@@ -1277,6 +1281,81 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
 
   fun setStatsShowIncome(showIncome: Boolean) {
     statsShowIncome.value = showIncome
+  }
+
+  fun downloadStatementPdfForSelectedPeriod(
+    onFallbackCreateDocument: ((fileName: String, bytes: ByteArray) -> Unit)? = null,
+    onSavedUri: ((android.net.Uri) -> Unit)? = null,
+  ) {
+    if (_isDownloadingStatement.value) return
+    val period = uiState.value.selectedPeriod
+    viewModelScope.launch {
+      _isDownloadingStatement.value = true
+      try {
+        when (val result = syncManager.downloadFinancialStatementPdf(periodKey = period.key)) {
+          is com.example.data.sync.BinaryDownloadResult.Success -> {
+            val pagesSuffix = result.pages?.let { " ($it págs.)" } ?: ""
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+              val savedUri = savePdfToDownloads(result.fileName, result.bytes)
+              if (savedUri != null) {
+                _snackbarMessages.tryEmit(
+                  "Estado de cuenta guardado en Descargas: ${result.fileName}$pagesSuffix"
+                )
+                onSavedUri?.invoke(savedUri)
+              } else if (onFallbackCreateDocument != null) {
+                onFallbackCreateDocument(result.fileName, result.bytes)
+              } else {
+                _snackbarMessages.tryEmit("No se pudo guardar el PDF en Descargas")
+              }
+            } else if (onFallbackCreateDocument != null) {
+              onFallbackCreateDocument(result.fileName, result.bytes)
+            } else {
+              _snackbarMessages.tryEmit("No se pudo iniciar el guardado del PDF")
+            }
+          }
+          is com.example.data.sync.BinaryDownloadResult.Failure -> {
+            _snackbarMessages.tryEmit(
+              "Error al descargar estado de cuenta (${period.label}): ${result.message}"
+            )
+          }
+        }
+      } finally {
+        _isDownloadingStatement.value = false
+      }
+    }
+  }
+
+  @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.Q)
+  private fun savePdfToDownloads(fileName: String, bytes: ByteArray): android.net.Uri? {
+    val resolver = getApplication<Application>().contentResolver
+    val values =
+      android.content.ContentValues().apply {
+        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+        put(
+          android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+          android.os.Environment.DIRECTORY_DOWNLOADS,
+        )
+        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+      }
+    val uri =
+      resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        ?: return null
+    return try {
+      resolver.openOutputStream(uri)?.use { stream ->
+        stream.write(bytes)
+        stream.flush()
+      } ?: return null
+      val doneValues =
+        android.content.ContentValues().apply {
+          put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+        }
+      resolver.update(uri, doneValues, null, null)
+      uri
+    } catch (_: Exception) {
+      runCatching { resolver.delete(uri, null, null) }
+      null
+    }
   }
 
   fun updateExistingTransaction(
