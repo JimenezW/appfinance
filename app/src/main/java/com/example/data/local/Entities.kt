@@ -282,6 +282,6 @@ data class SyncSettingsEntity(
 ) {
   companion object {
     const val DEFAULT_API_BASE_URL =
-      "https://precisely-preferences-crew-exhibition.trycloudflare.com"
+      "https://soon-diamonds-writing-hundred.trycloudflare.com"
   }
 }

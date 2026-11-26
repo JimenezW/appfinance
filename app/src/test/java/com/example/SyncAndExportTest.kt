@@ -415,4 +415,88 @@ class SyncAndExportTest {
     assertEquals(14, repository.classifications.first().size)
     assertEquals(66, repository.details.first().size)
   }
+
+  @Test
+  fun wifiSyncBatch_stripsForbiddenAdditionalPropertiesAndCoercesBudgetSavingsGoal() = runTest {
+    val cls = repository.classifications.first().first { TransactionTypes.isExpense(it.typeId) }
+    val det = repository.details.first().first { it.classificationId == cls.id }
+    val acc = repository.accounts.first().first()
+    val rule = repository.scheduledRules.first().first()
+
+    // Enqueue admin changes of every type via repository (which stores *Mxn / timestamps in queue payloadJson)
+    repository.saveClassification(cls.copy(monthlyBudgetCents = 150_000L))
+    repository.saveAccount(acc.copy(balanceCents = 250_000L))
+    repository.saveScheduledRule(rule.copy(amountCents = 30_000L))
+    val budget =
+      repository.ensureExplicitBudgetForPeriod(
+        fiscalPeriodKey = "2026-12",
+        expectedIncomeCents = 2_000_000L,
+        savingsGoalCents = null, // must be serialized as 0 (non-null integer) in sync batch
+      )
+    val budgetItem =
+      com.example.data.local.BudgetItemEntity(
+        id = com.example.domain.BudgetEngine.budgetItemId(budget.id, cls.id, null),
+        budgetId = budget.id,
+        fiscalPeriodKey = "2026-12",
+        classificationId = cls.id,
+        detailId = null,
+        amountCents = 150_000L,
+      )
+    db.financeDao().insertBudgetItem(budgetItem)
+    db.financeDao().insertSyncQueueItem(
+      com.example.data.local.SyncQueueItemEntity(
+        entityType = SyncEntityTypes.BUDGET_ITEM,
+        entityId = budgetItem.id,
+        operation = com.example.data.local.SyncOperations.UPSERT,
+        payloadJson = com.example.data.sync.ApiJsonBuilder.budgetItemToJson(budgetItem).toString(),
+      )
+    )
+
+    val syncManager =
+      SyncManager(
+        dao = db.financeDao(),
+        transport =
+          object : SyncTransport {
+            override suspend fun postJson(
+              endpointUrl: String,
+              jsonPayload: String,
+              authContext: com.example.data.security.DeviceAuthContext,
+              idempotencyKey: String?,
+            ): SyncTransportResult = SyncTransportResult.Success(200, """{"success":true}""")
+
+            override suspend fun getJson(
+              endpointUrl: String,
+              authContext: com.example.data.security.DeviceAuthContext,
+            ): SyncTransportResult = SyncTransportResult.Success(200, """{"success":true}""")
+          },
+      )
+
+    val batch = syncManager.previewPendingBatchPayload()
+    val root = JSONObject(batch.jsonString)
+    val adminChanges = root.getJSONObject("adminChanges")
+
+    val clsJson = adminChanges.getJSONArray("classifications").getJSONObject(0)
+    assertFalse(clsJson.has("monthlyBudgetMxn"))
+    assertEquals(150_000L, clsJson.getLong("monthlyBudgetCents"))
+
+    val accJson = adminChanges.getJSONArray("accounts").getJSONObject(0)
+    assertFalse(accJson.has("balanceMxn"))
+    assertEquals(250_000L, accJson.getLong("balanceCents"))
+
+    val ruleJson = adminChanges.getJSONArray("scheduledRules").getJSONObject(0)
+    assertFalse(ruleJson.has("amountMxn"))
+    assertEquals(30_000L, ruleJson.getLong("amountCents"))
+
+    val budgetJson = adminChanges.getJSONArray("budgets").getJSONObject(0)
+    assertFalse(budgetJson.has("createdAtMillis"))
+    assertFalse(budgetJson.has("updatedAtMillis"))
+    assertFalse(budgetJson.isNull("savingsGoalCents"))
+    assertEquals(0L, budgetJson.getLong("savingsGoalCents"))
+
+    val budgetItemJson = adminChanges.getJSONArray("budgetItems").getJSONObject(0)
+    assertFalse(budgetItemJson.has("amountMxn"))
+    assertFalse(budgetItemJson.has("createdAtMillis"))
+    assertFalse(budgetItemJson.has("updatedAtMillis"))
+    assertEquals(150_000L, budgetItemJson.getLong("amountCents"))
+  }
 }

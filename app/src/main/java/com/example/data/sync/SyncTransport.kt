@@ -255,7 +255,33 @@ class OkHttpSyncTransport(
         val err = root.optJSONObject("error") ?: return@runCatching null
         val code = err.optString("code").takeIf { it.isNotBlank() }
         val msg = err.optString("message").takeIf { it.isNotBlank() }
-        code to msg
+        val detailsArr = err.optJSONArray("details")
+        val detailsSummary =
+          if (detailsArr != null && detailsArr.length() > 0) {
+            buildList {
+                val limit = minOf(detailsArr.length(), 4)
+                for (i in 0 until limit) {
+                  val item = detailsArr.opt(i)
+                  when (item) {
+                    is JSONObject -> {
+                      val path = item.optString("path").ifBlank { item.optString("field") }
+                      val dMsg = item.optString("message").ifBlank { item.toString() }
+                      add(if (path.isNotBlank()) "$path: $dMsg" else dMsg)
+                    }
+                    else -> add(item.toString())
+                  }
+                }
+              }
+              .joinToString("; ")
+          } else null
+        val fullMsg =
+          when {
+            msg != null && !detailsSummary.isNullOrBlank() -> "$msg ($detailsSummary)"
+            msg != null -> msg
+            !detailsSummary.isNullOrBlank() -> detailsSummary
+            else -> null
+          }
+        code to fullMsg
       }
       .getOrNull()
   }

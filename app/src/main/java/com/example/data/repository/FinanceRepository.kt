@@ -53,6 +53,10 @@ class FinanceRepository(private val dao: FinanceDao) {
           existingSettings.apiEndpointUrl.contains(
             "conscious-princess-constitutional-promotions.trycloudflare.com",
             ignoreCase = true,
+          ) ||
+          existingSettings.apiEndpointUrl.contains(
+            "precisely-preferences-crew-exhibition.trycloudflare.com",
+            ignoreCase = true,
           )
       if (needsDeviceId || needsDefaultTunnelUrl) {
         dao.upsertSyncSettings(
