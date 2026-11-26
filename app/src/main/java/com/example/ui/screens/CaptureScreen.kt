@@ -170,6 +170,7 @@ fun CaptureScreen(
             accounts = state.activeAccounts,
             selectedAccountId = state.effectiveAccountId,
             isIncome = TransactionTypes.isIncome(state.capture.typeId),
+            balanceForAccount = { state.captureAccountBalanceCents(it) },
             onSelectAccount = onSelectAccount,
             onOpenAccountPicker = { showAccountSheet = true },
             onOpenAccountsAdmin = onOpenAccountsAdmin,
@@ -272,6 +273,7 @@ fun CaptureScreen(
             accounts = state.activeAccounts,
             selectedAccountId = state.effectiveAccountId,
             isIncome = TransactionTypes.isIncome(state.capture.typeId),
+            balanceForAccount = { state.captureAccountBalanceCents(it) },
             onSelectAccount = onSelectAccount,
             onOpenAccountPicker = { showAccountSheet = true },
             onOpenAccountsAdmin = onOpenAccountsAdmin,
@@ -463,10 +465,11 @@ fun CaptureScreen(
       state.activeAccounts.map { acc ->
         val uses = state.accountUsageCount(acc.id)
         val usesText = if (uses > 0) " • $uses movs" else ""
+        val periodBalance = state.captureAccountBalanceCents(acc.id)
         PickerOption(
           id = acc.id,
           title = acc.name,
-          subtitle = "Saldo: ${FiscalPeriodCalculator.formatMxn(acc.balanceCents)}$usesText",
+          subtitle = "Saldo (${state.capture.fiscalPeriod.label}): ${FiscalPeriodCalculator.formatMxn(periodBalance)}$usesText",
           isPinned = acc.isPinned,
         )
       }
@@ -1120,6 +1123,7 @@ private fun AccountSelectorStrip(
   accounts: List<AccountEntity>,
   selectedAccountId: String?,
   isIncome: Boolean,
+  balanceForAccount: (String) -> Long,
   onSelectAccount: (String) -> Unit,
   onOpenAccountPicker: () -> Unit,
   onOpenAccountsAdmin: () -> Unit,
@@ -1163,6 +1167,7 @@ private fun AccountSelectorStrip(
   ) {
     items(quickAccounts, key = { it.id }) { acc ->
       val selected = acc.id == selectedAccountId
+      val periodBalanceCents = balanceForAccount(acc.id)
       Surface(
         onClick = { onSelectAccount(acc.id) },
         modifier = Modifier.testTag("account_chip_${acc.id}"),
@@ -1186,12 +1191,15 @@ private fun AccountSelectorStrip(
             maxLines = 1,
           )
           Text(
-            text = FiscalPeriodCalculator.formatMxn(acc.balanceCents),
+            text = FiscalPeriodCalculator.formatMxn(periodBalanceCents),
             fontFamily = MonoFontFamily,
             fontSize = 11.sp,
             color =
-              if (selected) accentColor.copy(alpha = 0.85f)
-              else MaterialTheme.colorScheme.onSurfaceVariant,
+              when {
+                periodBalanceCents < 0L -> financeColors.expenseAccent
+                selected -> accentColor.copy(alpha = 0.85f)
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+              },
           )
         }
       }
