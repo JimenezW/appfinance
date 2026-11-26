@@ -87,11 +87,60 @@ object WithdrawalTransferRule {
     }
   }
 
+  fun isValesIncomeHierarchy(
+    typeId: String,
+    classificationName: String?,
+    detailName: String?,
+  ): Boolean {
+    if (!TransactionTypes.isIncome(typeId)) return false
+    return normalizeToken(classificationName) == "otro" &&
+      normalizeToken(detailName).contains("vales")
+  }
+
+  fun isValesIncomeTransaction(
+    tx: FinanceTransactionEntity,
+    classificationsById: Map<String, ClassificationEntity>,
+    detailsById: Map<String, DetailItemEntity>,
+  ): Boolean {
+    val clsName = classificationsById[tx.classificationId]?.name
+    val detName = detailsById[tx.detailId]?.name
+    return isValesIncomeHierarchy(tx.typeId, clsName, detName)
+  }
+
+  fun resolveValesAccountId(accounts: List<AccountEntity>): String? {
+    val sortedActive =
+      accounts
+        .filter { it.isActive }
+        .sortedWith(compareBy<AccountEntity> { it.sortOrder }.thenBy { it.name })
+    val fallbackAll =
+      accounts.sortedWith(compareBy<AccountEntity> { it.sortOrder }.thenBy { it.name })
+    return sortedActive.firstOrNull { it.accountKind.equals("VALES", ignoreCase = true) }?.id
+      ?: fallbackAll.firstOrNull { it.accountKind.equals("VALES", ignoreCase = true) }?.id
+  }
+
+  /**
+   * Returns the effective account ID for a non-withdrawal transaction:
+   * - Ingreso -> Otro -> Vales (de) despensa is always attributed to the VALES account when present.
+   * - All other transactions use tx.accountId.
+   */
+  fun effectiveAccountId(
+    tx: FinanceTransactionEntity,
+    classificationsById: Map<String, ClassificationEntity>,
+    detailsById: Map<String, DetailItemEntity>,
+    accounts: List<AccountEntity>,
+  ): String {
+    if (isValesIncomeTransaction(tx, classificationsById, detailsById)) {
+      resolveValesAccountId(accounts)?.let { return it }
+    }
+    return tx.accountId
+  }
+
   /**
    * Computes the map of accountId -> balanceDeltaCents that a transaction produces.
-   * - Normal INGRESO: mapOf(tx.accountId to +tx.amountCents)
+   * - Normal INGRESO: mapOf(effectiveAccountId to +tx.amountCents)
    * - Normal GASTO: mapOf(tx.accountId to -tx.amountCents)
    * - Withdrawal (Ingreso -> Otro -> Retiro): mapOf(debitId to -tx.amountCents, cashId to +tx.amountCents)
+   * - Vales income (Ingreso -> Otro -> Vales [de] despensa): mapOf(valesAccountId to +tx.amountCents)
    */
   fun computeAccountBalanceDeltas(
     tx: FinanceTransactionEntity,
@@ -109,7 +158,8 @@ object WithdrawalTransferRule {
         )
       }
     }
+    val targetAccountId = effectiveAccountId(tx, classificationsById, detailsById, accounts)
     val delta = if (TransactionTypes.isIncome(tx.typeId)) tx.amountCents else -tx.amountCents
-    return mapOf(tx.accountId to delta)
+    return mapOf(targetAccountId to delta)
   }
 }

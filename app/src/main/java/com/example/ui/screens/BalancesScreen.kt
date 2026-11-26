@@ -29,6 +29,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -86,6 +88,7 @@ fun BalancesScreen(
   onNextPeriod: () -> Unit,
   onToggleAccountFilter: (String) -> Unit,
   onSearchQueryChange: (String) -> Unit,
+  onToggleSortDateOrder: () -> Unit = {},
   onToggleStatsIncome: (Boolean) -> Unit,
   onUpdateTransaction: (FinanceTransactionEntity, FinanceTransactionEntity) -> Unit,
   onDeleteTransaction: (FinanceTransactionEntity) -> Unit,
@@ -121,6 +124,7 @@ fun BalancesScreen(
           )
           FiscalPeriodSelectorPill(
             label = state.selectedPeriod.label,
+            canNext = state.canNavigateNextPeriod,
             onPrev = onPrevPeriod,
             onNext = onNextPeriod,
           )
@@ -189,7 +193,7 @@ fun BalancesScreen(
         )
       }
 
-      // Recent Movements Header + Search Toggle
+      // Recent Movements Header + Date Sort Toggle + Search Toggle
       item {
         val totalInPeriod = state.periodTransactions.size
         val shownCount = minOf(visibleMovementsCount, totalInPeriod)
@@ -208,17 +212,55 @@ fun BalancesScreen(
                 },
               style = MaterialTheme.typography.titleSmall,
             )
-            IconButton(
-              onClick = {
-                showSearchBar = !showSearchBar
-                if (!showSearchBar) onSearchQueryChange("")
-              },
-              modifier = Modifier.size(40.dp).testTag("toggle_search_tx_btn"),
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-              Icon(
-                imageVector = if (showSearchBar) Icons.Rounded.Close else Icons.Rounded.Search,
-                contentDescription = "Buscar movimientos",
-              )
+              Surface(
+                onClick = onToggleSortDateOrder,
+                shape = RoundedCornerShape(10.dp),
+                color = financeColors.subtleSurface,
+                border = BorderStroke(1.dp, financeColors.cardBorder),
+                modifier = Modifier.testTag("toggle_sort_tx_date_btn"),
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Icon(
+                    imageVector =
+                      if (state.sortTransactionsAscending) Icons.Rounded.ArrowUpward
+                      else Icons.Rounded.ArrowDownward,
+                    contentDescription =
+                      if (state.sortTransactionsAscending) {
+                        "Ordenar por fecha: menor a mayor"
+                      } else {
+                        "Ordenar por fecha: mayor a menor"
+                      },
+                    tint = financeColors.periodAccent,
+                    modifier = Modifier.size(16.dp),
+                  )
+                  Text(
+                    text = if (state.sortTransactionsAscending) "Fecha ↑" else "Fecha ↓",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                  )
+                }
+              }
+              IconButton(
+                onClick = {
+                  showSearchBar = !showSearchBar
+                  if (!showSearchBar) onSearchQueryChange("")
+                },
+                modifier = Modifier.size(40.dp).testTag("toggle_search_tx_btn"),
+              ) {
+                Icon(
+                  imageVector = if (showSearchBar) Icons.Rounded.Close else Icons.Rounded.Search,
+                  contentDescription = "Buscar movimientos",
+                )
+              }
             }
           }
           AnimatedVisibility(visible = showSearchBar) {
@@ -334,6 +376,7 @@ fun BalancesScreen(
 @Composable
 private fun FiscalPeriodSelectorPill(
   label: String,
+  canNext: Boolean = true,
   onPrev: () -> Unit,
   onNext: () -> Unit,
 ) {
@@ -363,12 +406,15 @@ private fun FiscalPeriodSelectorPill(
       )
       IconButton(
         onClick = onNext,
+        enabled = canNext,
         modifier = Modifier.size(40.dp).testTag("period_next_btn"),
       ) {
         Icon(
           imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
           contentDescription = "Siguiente periodo",
-          tint = financeColors.periodAccent,
+          tint =
+            if (canNext) financeColors.periodAccent
+            else financeColors.periodAccent.copy(alpha = 0.28f),
         )
       }
     }

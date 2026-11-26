@@ -479,4 +479,106 @@ class ErgonomicCatalogTest {
     assertEquals(0L, octState.captureAccountBalanceCents(cashId))
     assertEquals(0L, octState.captureAccountBalanceCents(valesId))
   }
+
+  @Test
+  fun balancesScreen_blocksEmptyFuturePeriods_routesValesIncome_andSortsByOperationDate() {
+    val clsOtroId = "c-otro-ingreso"
+    val clsBebeId = "c-bebe"
+    val detValesId = "d-vales"
+    val detLecheId = "d-leche"
+    val debitId = "c0ffd56e-8ffa-59bf-9d4b-3c07acf21554"
+    val cashId = "adfa1b53-ff67-5615-9d14-ceed4223db9d"
+    val valesId = "bf2bee3c-84c2-5ae2-8413-2ad64a83b109"
+
+    val classifications =
+      listOf(
+        ClassificationEntity(id = clsOtroId, typeId = TransactionTypes.INGRESO_UUID, name = "Otro", sortOrder = 1),
+        ClassificationEntity(id = clsBebeId, typeId = TransactionTypes.GASTO_UUID, name = "Bebé", sortOrder = 2),
+      )
+    val details =
+      listOf(
+        DetailItemEntity(id = detValesId, classificationId = clsOtroId, name = "Vales despensa", sortOrder = 1),
+        DetailItemEntity(id = detLecheId, classificationId = clsBebeId, name = "Leche", sortOrder = 1),
+      )
+    val accounts =
+      listOf(
+        AccountEntity(id = debitId, name = "Tarjeta de Débito (BBVA)", shortLabel = "BBVA Débito", accountKind = "DEBIT", sortOrder = 0),
+        AccountEntity(id = cashId, name = "Efectivo", shortLabel = "Efectivo", accountKind = "CASH", sortOrder = 1),
+        AccountEntity(id = valesId, name = "Tarjeta de Vales de Despensa", shortLabel = "Vales", accountKind = "VALES", sortOrder = 2),
+      )
+
+    val novDay1 = com.example.domain.FiscalPeriodCalculator.ymdToEpochDay(2026, 11, 2)
+    val novDay2 = com.example.domain.FiscalPeriodCalculator.ymdToEpochDay(2026, 11, 10)
+    val dicDay = com.example.domain.FiscalPeriodCalculator.ymdToEpochDay(2026, 11, 20)
+
+    // November has "Ingreso -> Otro -> Vales despensa" stored with cashId (e.g. historical import)
+    val txs =
+      listOf(
+        FinanceTransactionEntity(
+          id = "tx-nov-vales",
+          createdAtMillis = 1000L,
+          operationEpochDay = novDay1,
+          fiscalPeriodKey = "2026-11",
+          fiscalPeriodLabel = "nov 2026",
+          typeId = TransactionTypes.INGRESO_UUID,
+          classificationId = clsOtroId,
+          detailId = detValesId,
+          accountId = cashId,
+          amountCents = 68_940L,
+        ),
+        FinanceTransactionEntity(
+          id = "tx-nov-gasto",
+          createdAtMillis = 2000L,
+          operationEpochDay = novDay2,
+          fiscalPeriodKey = "2026-11",
+          fiscalPeriodLabel = "nov 2026",
+          typeId = TransactionTypes.GASTO_UUID,
+          classificationId = clsBebeId,
+          detailId = detLecheId,
+          accountId = debitId,
+          amountCents = 25_000L,
+        ),
+        FinanceTransactionEntity(
+          id = "tx-dic-gasto",
+          createdAtMillis = 3000L,
+          operationEpochDay = dicDay,
+          fiscalPeriodKey = "2026-12",
+          fiscalPeriodLabel = "dic 2026",
+          typeId = TransactionTypes.GASTO_UUID,
+          classificationId = clsBebeId,
+          detailId = detLecheId,
+          accountId = debitId,
+          amountCents = 10_000L,
+        ),
+      )
+
+    val novState =
+      FinanceUiState(
+        isLoaded = true,
+        selectedPeriod = com.example.domain.FiscalPeriod(2026, 11),
+        allClassifications = classifications,
+        allDetails = details,
+        allAccounts = accounts,
+        allTransactions = txs,
+      )
+
+    // 1. Period navigation guard: nov 2026 can advance to dic 2026, but dic 2026 cannot advance to ene 2027
+    assertTrue(novState.canNavigateNextPeriod)
+    val dicState = novState.copy(selectedPeriod = com.example.domain.FiscalPeriod(2026, 12))
+    assertFalse(dicState.canNavigateNextPeriod)
+
+    // 2. Vales income in November is credited to VALES account (not Efectivo)
+    assertEquals(68_940L, novState.periodAccountBalanceCents(valesId))
+    assertEquals(0L, novState.periodAccountBalanceCents(cashId))
+    assertEquals(-25_000L, novState.periodAccountBalanceCents(debitId))
+    val valesFiltered = novState.copy(selectedAccountFilterId = valesId)
+    assertEquals(1, valesFiltered.periodTransactions.size)
+    assertEquals("Vales", valesFiltered.periodTransactions.first().accountShortLabel)
+    assertEquals(68_940L, valesFiltered.periodIncomeCents)
+
+    // 3. Operation date sorting: default descending (novDay2 before novDay1), ascending reverses it
+    assertEquals(listOf("tx-nov-gasto", "tx-nov-vales"), novState.periodTransactions.map { it.entity.id })
+    val ascState = novState.copy(sortTransactionsAscending = true)
+    assertEquals(listOf("tx-nov-vales", "tx-nov-gasto"), ascState.periodTransactions.map { it.entity.id })
+  }
 }

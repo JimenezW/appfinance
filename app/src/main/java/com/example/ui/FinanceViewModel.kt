@@ -128,6 +128,7 @@ data class FinanceUiState(
     FiscalPeriodCalculator.computeFiscalPeriod(FiscalPeriodCalculator.todayEpochDay()),
   val selectedAccountFilterId: String? = null,
   val searchQuery: String = "",
+  val sortTransactionsAscending: Boolean = false,
   val statsShowIncome: Boolean = false,
   val wifiState: WifiConnectivityState = WifiConnectivityState(),
   val syncSettings: SyncSettingsEntity = SyncSettingsEntity(),
@@ -316,9 +317,17 @@ data class FinanceUiState(
     )
   }
 
+  private fun effectiveAccountIdFor(tx: FinanceTransactionEntity): String {
+    return com.example.domain.WithdrawalTransferRule.effectiveAccountId(
+      tx = tx,
+      classificationsById = classificationsById,
+      detailsById = detailsById,
+      accounts = allAccounts,
+    )
+  }
+
   private fun transactionTouchesSelectedAccount(tx: FinanceTransactionEntity): Boolean {
     val filterAccId = selectedAccountFilterId ?: return true
-    if (tx.accountId == filterAccId) return true
     if (isWithdrawalTransaction(tx)) {
       val resolved =
         com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
@@ -327,7 +336,7 @@ data class FinanceUiState(
         )
       return resolved?.debitAccountId == filterAccId || resolved?.cashAccountId == filterAccId
     }
-    return false
+    return effectiveAccountIdFor(tx) == filterAccId
   }
 
   val periodTransactions: List<TransactionDisplay> by
@@ -336,11 +345,20 @@ data class FinanceUiState(
       val detMap = detailsById
       val accMap = accountsById
       val query = searchQuery.trim().lowercase()
+      val dateComparator =
+        if (sortTransactionsAscending) {
+          compareBy<FinanceTransactionEntity> { it.operationEpochDay }.thenBy { it.createdAtMillis }
+        } else {
+          compareByDescending<FinanceTransactionEntity> { it.operationEpochDay }
+            .thenByDescending { it.createdAtMillis }
+        }
       allTransactions
         .filter { it.effectivePeriodKey() == selectedPeriod.key }
         .filter { transactionTouchesSelectedAccount(it) }
+        .sortedWith(dateComparator)
         .map { tx ->
           val isWithdrawal = isWithdrawalTransaction(tx)
+          val effectiveAccId = effectiveAccountIdFor(tx)
           val resolved =
             if (isWithdrawal) {
               com.example.domain.WithdrawalTransferRule.resolveWithdrawalAccounts(
@@ -354,7 +372,7 @@ data class FinanceUiState(
               val cashLbl = accMap[resolved.cashAccountId]?.shortLabel ?: "Efectivo"
               "$debitLbl → $cashLbl"
             } else {
-              accMap[tx.accountId]?.shortLabel ?: "Cuenta"
+              accMap[effectiveAccId]?.shortLabel ?: "Cuenta"
             }
           val isOutflow =
             if (isWithdrawal) {
@@ -366,7 +384,7 @@ data class FinanceUiState(
             entity = tx,
             classificationName = classMap[tx.classificationId]?.name ?: "Sin clasificación",
             detailName = detMap[tx.detailId]?.name ?: "Sin detalle",
-            accountName = accMap[tx.accountId]?.name ?: "Cuenta",
+            accountName = accMap[effectiveAccId]?.name ?: "Cuenta",
             accountShortLabel = shortLabel,
             isWithdrawalTransfer = isWithdrawal,
             isEffectiveOutflow = isOutflow,
@@ -393,7 +411,8 @@ data class FinanceUiState(
       allTransactions
         .filter {
           it.effectivePeriodKey() == selectedPeriod.key &&
-            (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
+            (selectedAccountFilterId == null ||
+              effectiveAccountIdFor(it) == selectedAccountFilterId) &&
             TransactionTypes.isIncome(it.typeId) &&
             !isWithdrawalTransaction(it)
         }
@@ -405,7 +424,8 @@ data class FinanceUiState(
       allTransactions
         .filter {
           it.effectivePeriodKey() == selectedPeriod.key &&
-            (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
+            (selectedAccountFilterId == null ||
+              effectiveAccountIdFor(it) == selectedAccountFilterId) &&
             TransactionTypes.isExpense(it.typeId)
         }
         .sumOf { it.amountCents }
@@ -414,6 +434,21 @@ data class FinanceUiState(
   val currentFiscalPeriod: FiscalPeriod by
     lazy(LazyThreadSafetyMode.NONE) {
       FiscalPeriodCalculator.computeFiscalPeriod(FiscalPeriodCalculator.todayEpochDay())
+    }
+
+  val latestCapturedPeriodKey: String? by
+    lazy(LazyThreadSafetyMode.NONE) {
+      allTransactions.maxOfOrNull { it.effectivePeriodKey() }
+    }
+
+  /**
+   * True only when there is captured transaction data in a fiscal period after selectedPeriod.
+   * Blocks navigating forward into periods without captured information (e.g. ene 2027+).
+   */
+  val canNavigateNextPeriod: Boolean
+    get() {
+      val latest = latestCapturedPeriodKey ?: return false
+      return selectedPeriod.next().key <= latest
     }
 
   /**
@@ -514,7 +549,8 @@ data class FinanceUiState(
       allTransactions
         .filter {
           it.effectivePeriodKey() == selectedPeriod.key &&
-            (selectedAccountFilterId == null || it.accountId == selectedAccountFilterId) &&
+            (selectedAccountFilterId == null ||
+              effectiveAccountIdFor(it) == selectedAccountFilterId) &&
             TransactionTypes.codeFor(it.typeId) == targetCode &&
             !isWithdrawalTransaction(it)
         }
@@ -645,6 +681,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     )
   private val selectedAccountFilterId = MutableStateFlow<String?>(null)
   private val searchQuery = MutableStateFlow("")
+  private val sortTransactionsAscending = MutableStateFlow(false)
   private val statsShowIncome = MutableStateFlow(false)
 
   private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -678,11 +715,24 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       adminSubSection,
       captureForm,
       selectedPeriod,
-      combine(selectedAccountFilterId, searchQuery, statsShowIncome) { accId, q, showInc ->
-        Triple(accId, q, showInc)
+      combine(selectedAccountFilterId, searchQuery, sortTransactionsAscending, statsShowIncome) {
+        accId,
+        q,
+        sortAsc,
+        showInc ->
+        FilterControlsSnapshot(accId, q, sortAsc, showInc)
       },
     ) { tab, adminSub, capture, period, filters ->
-      UiControlSnapshot(tab, adminSub, capture, period, filters.first, filters.second, filters.third)
+      UiControlSnapshot(
+        tab = tab,
+        adminSub = adminSub,
+        capture = capture,
+        period = period,
+        accountFilterId = filters.accountFilterId,
+        searchQuery = filters.searchQuery,
+        sortTransactionsAscending = filters.sortTransactionsAscending,
+        statsShowIncome = filters.statsShowIncome,
+      )
     }
 
   private val syncFlows =
@@ -723,6 +773,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
           selectedPeriod = controls.period,
           selectedAccountFilterId = controls.accountFilterId,
           searchQuery = controls.searchQuery,
+          sortTransactionsAscending = controls.sortTransactionsAscending,
           statsShowIncome = controls.statsShowIncome,
           wifiState = sync.wifiState,
           syncSettings = sync.settings,
@@ -911,7 +962,25 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
   }
 
   fun selectDetail(detailId: String) {
-    captureForm.update { it.copy(selectedDetailId = detailId) }
+    val state = uiState.value
+    val classId = state.effectiveClassificationId
+    val isValesIncome =
+      classId != null &&
+        com.example.domain.WithdrawalTransferRule.isValesIncomeHierarchy(
+          typeId = state.capture.typeId,
+          classificationName = state.classificationsById[classId]?.name,
+          detailName = state.detailsById[detailId]?.name,
+        )
+    val valesAccountId =
+      if (isValesIncome) {
+        com.example.domain.WithdrawalTransferRule.resolveValesAccountId(state.allAccounts)
+      } else null
+    captureForm.update {
+      it.copy(
+        selectedDetailId = detailId,
+        selectedAccountId = valesAccountId ?: it.selectedAccountId,
+      )
+    }
   }
 
   fun selectAccount(accountId: String) {
@@ -1036,6 +1105,20 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
       }
     }
 
+    val isValesIncome =
+      com.example.domain.WithdrawalTransferRule.isValesIncomeHierarchy(
+        typeId = resolvedTypeId,
+        classificationName = state.classificationsById[classId]?.name,
+        detailName = state.detailsById[detailId]?.name,
+      )
+    val effectiveAccountIdToSave =
+      if (isValesIncome) {
+        com.example.domain.WithdrawalTransferRule.resolveValesAccountId(state.allAccounts)
+          ?: accountId
+      } else {
+        accountId
+      }
+
     val tx =
       FinanceTransactionEntity(
         id = UUID.randomUUID().toString(),
@@ -1046,7 +1129,7 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         typeId = resolvedTypeId,
         classificationId = classId,
         detailId = detailId,
-        accountId = accountId,
+        accountId = effectiveAccountIdToSave,
         merchantName = merchant,
         amountCents = amountCents,
         note = note,
@@ -1175,12 +1258,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     selectedPeriod.update { it.next() }
   }
 
+  fun nextPeriodWithData() {
+    if (!uiState.value.canNavigateNextPeriod) return
+    selectedPeriod.update { it.next() }
+  }
+
   fun toggleAccountFilter(accountId: String) {
     selectedAccountFilterId.update { cur -> if (cur == accountId) null else accountId }
   }
 
   fun setSearchQuery(query: String) {
     searchQuery.value = query
+  }
+
+  fun toggleTransactionDateSort() {
+    sortTransactionsAscending.update { !it }
   }
 
   fun setStatsShowIncome(showIncome: Boolean) {
@@ -1674,6 +1766,13 @@ private data class CatalogSnapshot(
   val rules: List<ScheduledRuleEntity>,
 )
 
+private data class FilterControlsSnapshot(
+  val accountFilterId: String?,
+  val searchQuery: String,
+  val sortTransactionsAscending: Boolean,
+  val statsShowIncome: Boolean,
+)
+
 private data class UiControlSnapshot(
   val tab: MainTab,
   val adminSub: AdminSubSection,
@@ -1681,6 +1780,7 @@ private data class UiControlSnapshot(
   val period: FiscalPeriod,
   val accountFilterId: String?,
   val searchQuery: String,
+  val sortTransactionsAscending: Boolean,
   val statsShowIncome: Boolean,
 )
 
